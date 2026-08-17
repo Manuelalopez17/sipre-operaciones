@@ -1,0 +1,23 @@
+{
+  "short_name": "SIPRE",
+  "name": "SIPRE - Inspección de Patología y Riesgo Estructural",
+  "description": "Sistema de Inspección Post-Sismo y Evaluación de Emergencia Estructural",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#0f172a",
+  "theme_color": "#0284c7",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "categories": ["productivity", "utilities", "government", "business"]
+}
