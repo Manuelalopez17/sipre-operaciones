@@ -10,6 +10,8 @@ import {
   VisitAssignmentRecord,
   FindingRecord,
   EvidenceFileRecord,
+  EvidenceCategory,
+  EvidenceMediaItem,
   ActivityLogEntry,
   VisitAssessmentRecord,
   TechnicalDecisionRecord,
@@ -1069,77 +1071,64 @@ async function compressImageClientSide(file: File, maxDim = 1920, quality = 0.82
   });
 }
 
-export async function uploadEvidenceFile(
-  file: File,
-  metadata: {
-    caseId?: string;
-    visitId?: string;
-    inspectionId?: string;
-    findingId?: string;
-    workFrontId?: string;
-    category?: string;
-    description?: string;
-    uploadedBy?: string;
-  }
-): Promise<{ success: boolean; url?: string; storagePath?: string; error?: string }> {
+function mapEvidenceCategoryToDb(category?: string): string {
+  const map: Record<string, string> = { 'GENERAL VISIT':'general_visit', FINDINGS:'finding', 'BEFORE REPAIR':'before_repair', 'DURING REPAIR':'during_repair', 'AFTER REPAIR':'after_repair', MATERIALS:'materials', 'MATERIAL DELIVERY':'material_delivery', 'FINAL HANDOVER':'final_handover' };
+  return map[(category || '').toUpperCase()] || 'other';
+}
+
+function mapEvidenceCategoryFromDb(category?: string): EvidenceCategory {
+  const map: Record<string, EvidenceCategory> = { general_visit:'GENERAL VISIT', finding:'FINDINGS', before_repair:'BEFORE REPAIR', during_repair:'DURING REPAIR', after_repair:'AFTER REPAIR', materials:'MATERIALS', material_delivery:'MATERIAL DELIVERY', final_handover:'FINAL HANDOVER' };
+  return map[category || ''] || 'GENERAL VISIT';
+}
+
+function mediaTypeFromMime(mime?: string): EvidenceMediaItem['mediaType'] {
+  if ((mime || '').startsWith('image/')) return 'photo';
+  if ((mime || '').startsWith('video/')) return 'video';
+  if ((mime || '').startsWith('audio/')) return 'voice';
+  return 'document';
+}
+
+export async function uploadEvidenceFile(file: File, metadata: { caseId?: string; visitId?: string; inspectionId?: string; findingId?: string; workFrontId?: string; category?: string; description?: string; uploadedBy?: string; }): Promise<{ success:boolean; url?:string; storagePath?:string; error?:string }> {
   const client = getSupabaseClient();
-  if (!client) {
-    return { success: false, error: 'Cliente de Supabase no disponible' };
-  }
-
+  if (!client) return { success:false, error:'Cliente de Supabase no disponible' };
   try {
-    const compressedBlob = await compressImageClientSide(file);
-    const ext = file.name.split('.').pop() || 'jpg';
-    const timestamp = Date.now();
-    const randomStr = Math.random().toString(36).substring(2, 8);
-    const storagePath = `${metadata.caseId || 'general'}/${timestamp}-${randomStr}.${ext}`;
+    const body = file.type.startsWith('image/') ? await compressImageClientSide(file) : file;
+    const rawExt = file.name.includes('.') ? file.name.split('.').pop() : undefined;
+    const mimeExt = file.type.includes('/') ? file.type.split('/')[1].split(';')[0] : undefined;
+    const ext = (rawExt || mimeExt || 'bin').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    const ts = Date.now();
+    const rand = Math.random().toString(36).substring(2,8);
+    const scope = metadata.caseId || metadata.visitId || 'general';
+    const storagePath = `${scope}/${metadata.visitId || 'general'}/${ts}-${rand}.${ext}`;
+    const { error: uploadError } = await client.storage.from('sipre-files').upload(storagePath, body, { cacheControl:'3600', upsert:false, contentType:file.type || 'application/octet-stream' });
+    if (uploadError) return { success:false, error:uploadError.message };
 
-    const { error: uploadError } = await client.storage
-      .from('sipre-files')
-      .upload(storagePath, compressedBlob, {
-        cacheControl: '3600',
-        upsert: true,
-        contentType: file.type || 'image/jpeg',
-      });
+    const { error: evidenceError } = await client.from('evidence_files').insert({
+      case_id: metadata.caseId || null, visit_id: metadata.visitId || null, inspection_id: metadata.inspectionId || null, finding_id: metadata.findingId || null, work_front_id: metadata.workFrontId || null,
+      category: mapEvidenceCategoryToDb(metadata.category), storage_path: storagePath, original_filename: file.name, file_type: file.type || 'application/octet-stream', description: metadata.description || '', uploaded_by: metadata.uploadedBy || null, captured_at: new Date().toISOString()
+    });
+    if (evidenceError) { await client.storage.from('sipre-files').remove([storagePath]); return { success:false, error:evidenceError.message }; }
+    const { data: signed } = await client.storage.from('sipre-files').createSignedUrl(storagePath, 60*60*24*7);
+    return { success:true, url:signed?.signedUrl || storagePath, storagePath };
+  } catch (err:any) { return { success:false, error:err?.message || 'Error al subir archivo' }; }
+}
 
-    if (uploadError) {
-      console.warn('Storage upload error:', uploadError.message);
-      return { success: false, error: uploadError.message };
+export async function getEvidenceFilesFromDb(filters: { caseId?:string; visitId?:string; workFrontId?:string }): Promise<EvidenceMediaItem[]> {
+  const client = getSupabaseClient();
+  if (!client) return [];
+  try {
+    let query = client.from('evidence_files').select('*').order('captured_at', { ascending:false });
+    if (filters.visitId) query = query.eq('visit_id', filters.visitId); else if (filters.workFrontId) query = query.eq('work_front_id', filters.workFrontId); else if (filters.caseId) query = query.eq('case_id', filters.caseId);
+    const { data, error } = await query;
+    if (error) return [];
+    const items: EvidenceMediaItem[] = [];
+    for (const row of data || []) {
+      const { data: signed } = await client.storage.from('sipre-files').createSignedUrl(row.storage_path, 60*60*24*7);
+      const captured = new Date(row.captured_at || row.created_at || new Date().toISOString());
+      items.push({ id:row.id, mediaType:mediaTypeFromMime(row.file_type), url:signed?.signedUrl || row.storage_path, filename:row.original_filename || 'evidencia', date:captured.toISOString().split('T')[0], time:captured.toTimeString().slice(0,5), user:row.uploaded_by || 'Usuario SIPRE', visitId:row.visit_id || undefined, caseId:row.case_id || undefined, workFrontId:row.work_front_id || undefined, category:mapEvidenceCategoryFromDb(row.category), description:row.description || '', createdAt:row.created_at || captured.toISOString() });
     }
-
-    // Get signed URL or public URL
-    const { data: urlData } = client.storage.from('sipre-files').getPublicUrl(storagePath);
-    const fileUrl = urlData?.publicUrl || storagePath;
-
-    // Record in evidence_files
-    const evidencePayload: EvidenceFileRecord = {
-      id: `ev-${timestamp}-${randomStr}`,
-      case_id: metadata.caseId,
-      visit_id: metadata.visitId,
-      inspection_id: metadata.inspectionId,
-      finding_id: metadata.findingId,
-      work_front_id: metadata.workFrontId,
-      category: metadata.category || 'Fotográfica',
-      storage_path: storagePath,
-      filename: file.name,
-      file_type: file.type,
-      file_size: file.size,
-      description: metadata.description || '',
-      uploaded_by: metadata.uploadedBy,
-      created_at: new Date().toISOString(),
-    };
-
-    await client.from('evidence_files').insert(evidencePayload);
-
-    return {
-      success: true,
-      url: fileUrl,
-      storagePath,
-    };
-  } catch (err: any) {
-    console.warn('Upload evidence error:', err);
-    return { success: false, error: err?.message || 'Error al subir archivo' };
-  }
+    return items;
+  } catch { return []; }
 }
 
 // -------------------------------------------------------------
