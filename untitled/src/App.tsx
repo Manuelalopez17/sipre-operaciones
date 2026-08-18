@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { PropertyInspection, UserRole, CaseRecord, VisitRecord } from './types';
-import { 
-  getInspections, 
-  saveInspection, 
-  getPendingSyncCount, 
+import { PropertyInspection, UserRole, VisitRecord } from './types';
+import {
+  getInspections,
+  saveInspection,
+  saveVisit,
+  getPendingSyncCount,
   processSyncQueue,
-  subscribeToNetworkStatus 
+  subscribeToNetworkStatus
 } from './lib/storage';
+import { getVisitsFromDb } from './lib/remoteCore';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { subscribeToOperationalRealtime } from './lib/supabaseService';
 import { Header, MainNavView } from './components/Header';
@@ -41,35 +43,50 @@ const AppInner: React.FC = () => {
   const [selectedVisitForField, setSelectedVisitForField] = useState<VisitRecord | undefined>(undefined);
   const [currentRole, setCurrentRole] = useState<UserRole>('Inspector');
 
-  // Network & Sync state
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
-  // Modals state
   const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState<boolean>(false);
   const [isReferencesModalOpen, setIsReferencesModalOpen] = useState<boolean>(false);
   const [isNewCaseModalOpen, setIsNewCaseModalOpen] = useState<boolean>(false);
   const [isScheduleVisitModalOpen, setIsScheduleVisitModalOpen] = useState<boolean>(false);
   const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState<boolean>(false);
 
-  // Load initial data and subscribe to network & realtime
+  const refreshData = () => {
+    const loaded = getInspections();
+    setInspections(loaded);
+    setPendingSyncCount(getPendingSyncCount());
+  };
+
+  const syncRemoteVisitsToLocal = async () => {
+    try {
+      const remoteVisits = await getVisitsFromDb();
+      remoteVisits.forEach((visit) => saveVisit(visit, 'Supabase Sync'));
+    } catch (err) {
+      console.warn('Could not mirror Supabase visits into dashboard cache:', err);
+    }
+  };
+
   useEffect(() => {
     const loaded = getInspections();
     setInspections(loaded);
     setPendingSyncCount(getPendingSyncCount());
 
+    syncRemoteVisitsToLocal().then(refreshData);
+
     const unsubNetwork = subscribeToNetworkStatus((online) => {
       setIsOnline(online);
-      if (online) {
-        handleTriggerSync();
-      }
+      if (online) handleTriggerSync();
     });
 
-    // Realtime Postgres sync
     const unsubRealtime = subscribeToOperationalRealtime((table, payload) => {
       console.log(`[Realtime Sync] Change detected on ${table}:`, payload);
-      refreshData();
+      if (table === 'visits' || table === 'visit_assignments') {
+        syncRemoteVisitsToLocal().then(refreshData);
+      } else {
+        refreshData();
+      }
     });
 
     return () => {
@@ -78,16 +95,11 @@ const AppInner: React.FC = () => {
     };
   }, []);
 
-  const refreshData = () => {
-    const loaded = getInspections();
-    setInspections(loaded);
-    setPendingSyncCount(getPendingSyncCount());
-  };
-
   const handleTriggerSync = async () => {
     setIsSyncing(true);
     try {
       await processSyncQueue();
+      await syncRemoteVisitsToLocal();
       refreshData();
     } catch (err) {
       console.warn('Sync queue error:', err);
@@ -113,11 +125,8 @@ const AppInner: React.FC = () => {
   };
 
   const handleNavigate = (view: MainNavView) => {
-    if (view === 'references') {
-      setIsReferencesModalOpen(true);
-    } else {
-      setActiveView(view);
-    }
+    if (view === 'references') setIsReferencesModalOpen(true);
+    else setActiveView(view);
   };
 
   const handleStartFieldMode = (visit?: VisitRecord) => {
@@ -125,7 +134,6 @@ const AppInner: React.FC = () => {
     setActiveView('field-mode');
   };
 
-  // 1. Loading screen while checking auth
   if (authLoading) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-4">
@@ -140,24 +148,17 @@ const AppInner: React.FC = () => {
     );
   }
 
-  // 2. Unauthenticated state -> Show Login Screen
   if (!user) {
     return (
       <>
         <LoginView onOpenSupabaseConfig={() => setIsSupabaseModalOpen(true)} />
-        <SupabaseConfigModal
-          isOpen={isSupabaseModalOpen}
-          onClose={() => setIsSupabaseModalOpen(false)}
-        />
+        <SupabaseConfigModal isOpen={isSupabaseModalOpen} onClose={() => setIsSupabaseModalOpen(false)} />
       </>
     );
   }
 
-  // 3. Authenticated state -> Show full operational application
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-cyan-500 selection:text-white">
-      
-      {/* Universal Technical Operations Header */}
       <Header
         currentRole={currentRole}
         onRoleChange={setCurrentRole}
@@ -173,10 +174,7 @@ const AppInner: React.FC = () => {
         onOpenEmergencyModal={() => setIsEmergencyModalOpen(true)}
       />
 
-      {/* Main Operational Router */}
       <main className="flex-1 pb-10">
-        
-        {/* 1. INICIO - Operational Dashboard */}
         {activeView === 'dashboard' && (
           <Dashboard
             onNavigate={handleNavigate}
@@ -185,14 +183,10 @@ const AppInner: React.FC = () => {
           />
         )}
 
-        {/* 2. AGENDA - Visit Planning & Calendar */}
         {activeView === 'agenda' && (
-          <AgendaView
-            onOpenScheduleVisitModal={() => setIsScheduleVisitModalOpen(true)}
-          />
+          <AgendaView onOpenScheduleVisitModal={() => setIsScheduleVisitModalOpen(true)} />
         )}
 
-        {/* 3. EXPEDIENTES - Case Management & History */}
         {activeView === 'cases' && (
           <CasesView
             onOpenNewCaseModal={() => setIsNewCaseModalOpen(true)}
@@ -202,7 +196,6 @@ const AppInner: React.FC = () => {
           />
         )}
 
-        {/* 4. VISITAS - Operations & Assigned Professional (Mis Visitas) */}
         {activeView === 'visits' && (
           <VisitsView
             onOpenScheduleVisitModal={() => setIsScheduleVisitModalOpen(true)}
@@ -210,7 +203,6 @@ const AppInner: React.FC = () => {
           />
         )}
 
-        {/* 5. FRENTES DE OBRA - Work Fronts Execution & Daily Log */}
         {activeView === 'work-fronts' && (
           <WorkFrontsView
             onNavigateToMaterials={() => setActiveView('materials')}
@@ -218,29 +210,14 @@ const AppInner: React.FC = () => {
           />
         )}
 
-        {/* 6. MATERIALES - Material Requests & Supplies */}
         {activeView === 'materials' && (
-          <MaterialsView
-            onNavigateToDeliveries={() => setActiveView('deliveries')}
-          />
+          <MaterialsView onNavigateToDeliveries={() => setActiveView('deliveries')} />
         )}
 
-        {/* 7. ENTREGAS - Deliveries & Transport Dispatches */}
-        {activeView === 'deliveries' && (
-          <DeliveriesView />
-        )}
+        {activeView === 'deliveries' && <DeliveriesView />}
+        {activeView === 'billing' && <BillingView />}
+        {activeView === 'team' && <TeamView />}
 
-        {/* 8. COBROS - Accounts of Charge & Payments */}
-        {activeView === 'billing' && (
-          <BillingView />
-        )}
-
-        {/* 9. EQUIPO - Technical Staff & Crews */}
-        {activeView === 'team' && (
-          <TeamView />
-        )}
-
-        {/* 10. INSPECCIONES - Structural Pathology & Emergency Triages */}
         {activeView === 'inspections' && (
           <CoordinatorOperations
             inspections={inspections}
@@ -249,7 +226,6 @@ const AppInner: React.FC = () => {
           />
         )}
 
-        {/* 11. MODO CAMPO - Mobile-First 10-Step Field Inspection */}
         {activeView === 'field-mode' && (
           <FieldModeView
             onBackToDashboard={() => setActiveView('dashboard')}
@@ -258,21 +234,14 @@ const AppInner: React.FC = () => {
           />
         )}
 
-        {/* 12. REVISIÓN TÉCNICA - Specialist Concept & Structural Analysis */}
         {activeView === 'technical-review' && (
-          <TechnicalReviewView
-            onNavigateToClientApproval={() => setActiveView('client-approval')}
-          />
+          <TechnicalReviewView onNavigateToClientApproval={() => setActiveView('client-approval')} />
         )}
 
-        {/* 13. APROBACIÓN DEL CLIENTE - Acceptance, Budget & Signature */}
         {activeView === 'client-approval' && (
-          <ClientApprovalView
-            onBackToDashboard={() => setActiveView('dashboard')}
-          />
+          <ClientApprovalView onBackToDashboard={() => setActiveView('dashboard')} />
         )}
 
-        {/* 14. INSPECTION FORM - Pathology Form */}
         {activeView === 'form' && selectedInspection && (
           <InspectionForm
             inspection={selectedInspection}
@@ -283,58 +252,34 @@ const AppInner: React.FC = () => {
           />
         )}
 
-        {/* 15. REPORT VIEW - Inspection Report */}
         {activeView === 'report' && selectedInspection && (
-          <ReportView
-            inspection={selectedInspection}
-            onBack={() => setActiveView('inspections')}
-          />
+          <ReportView inspection={selectedInspection} onBack={() => setActiveView('inspections')} />
         )}
-
       </main>
 
-      {/* New Case Modal */}
       <NewCaseModal
         isOpen={isNewCaseModalOpen}
         onClose={() => setIsNewCaseModalOpen(false)}
         onCaseCreated={() => refreshData()}
       />
 
-      {/* Schedule Visit Modal */}
       <ScheduleVisitModal
         isOpen={isScheduleVisitModalOpen}
         onClose={() => setIsScheduleVisitModalOpen(false)}
-        onVisitCreated={() => refreshData()}
+        onVisitCreated={() => syncRemoteVisitsToLocal().then(refreshData)}
       />
 
-      {/* Emergency Configuration Modal */}
-      <EmergencyConfigModal
-        isOpen={isEmergencyModalOpen}
-        onClose={() => setIsEmergencyModalOpen(false)}
-      />
-
-      {/* Technical Standards Modal */}
-      <TechnicalReferencesModal
-        isOpen={isReferencesModalOpen}
-        onClose={() => setIsReferencesModalOpen(false)}
-      />
-
-      {/* Supabase Database & Sync Modal */}
-      <SupabaseConfigModal
-        isOpen={isSupabaseModalOpen}
-        onClose={() => setIsSupabaseModalOpen(false)}
-      />
-
+      <EmergencyConfigModal isOpen={isEmergencyModalOpen} onClose={() => setIsEmergencyModalOpen(false)} />
+      <TechnicalReferencesModal isOpen={isReferencesModalOpen} onClose={() => setIsReferencesModalOpen(false)} />
+      <SupabaseConfigModal isOpen={isSupabaseModalOpen} onClose={() => setIsSupabaseModalOpen(false)} />
     </div>
   );
 };
 
-export const App: React.FC = () => {
-  return (
-    <AuthProvider>
-      <AppInner />
-    </AuthProvider>
-  );
-};
+export const App: React.FC = () => (
+  <AuthProvider>
+    <AppInner />
+  </AuthProvider>
+);
 
 export default App;
