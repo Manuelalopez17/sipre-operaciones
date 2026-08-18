@@ -1,0 +1,35 @@
+name: Apply SIPRE media fix
+
+on:
+  push:
+    paths:
+      - 'scripts/apply_media_fix.py'
+      - '.github/workflows/apply-media-fix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-media:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply media patch
+        run: python scripts/apply_media_fix.py
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add untitled/src/components/FieldModeView.tsx untitled/src/lib/supabaseService.ts
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "Enable SIPRE photos videos voice notes and documents"
+          git push origin HEAD:main
