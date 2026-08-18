@@ -4,16 +4,13 @@ import {
   getInspections,
   saveInspection,
   saveVisit,
-  saveCase,
   getPendingSyncCount,
   processSyncQueue,
-  subscribeToNetworkStatus,
+  subscribeToNetworkStatus
 } from './lib/storage';
 import { getVisitsFromDb } from './lib/remoteCore';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { getCasesFromDb, subscribeToOperationalRealtime, finishVisitInDb } from './lib/supabaseService';
-import { syncWorkFrontCacheFromDb } from './lib/workFrontRemote';
-import { getRoleCategory, isPlanner, isProfessional } from './lib/roles';
+import { subscribeToOperationalRealtime } from './lib/supabaseService';
 import { Header, MainNavView } from './components/Header';
 import { Dashboard } from './components/Dashboard';
 import { AgendaView } from './components/AgendaView';
@@ -45,50 +42,48 @@ const AppInner: React.FC = () => {
   const [selectedInspection, setSelectedInspection] = useState<PropertyInspection | null>(null);
   const [selectedVisitForField, setSelectedVisitForField] = useState<VisitRecord | undefined>(undefined);
   const [currentRole, setCurrentRole] = useState<UserRole>('Inspector');
+
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
-  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
-  const [isReferencesModalOpen, setIsReferencesModalOpen] = useState(false);
-  const [isNewCaseModalOpen, setIsNewCaseModalOpen] = useState(false);
-  const [isScheduleVisitModalOpen, setIsScheduleVisitModalOpen] = useState(false);
-  const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState(false);
+
+  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState<boolean>(false);
+  const [isReferencesModalOpen, setIsReferencesModalOpen] = useState<boolean>(false);
+  const [isNewCaseModalOpen, setIsNewCaseModalOpen] = useState<boolean>(false);
+  const [isScheduleVisitModalOpen, setIsScheduleVisitModalOpen] = useState<boolean>(false);
+  const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState<boolean>(false);
 
   const refreshData = () => {
-    setInspections(getInspections());
+    const loaded = getInspections();
+    setInspections(loaded);
     setPendingSyncCount(getPendingSyncCount());
   };
 
-  const syncRemoteOperationalToLocal = async () => {
-    if (!user?.id) return;
+  const syncRemoteVisitsToLocal = async () => {
     try {
-      const [remoteVisits, remoteCases] = await Promise.all([
-        getVisitsFromDb(),
-        getCasesFromDb(),
-      ]);
-      remoteVisits.forEach(visit => saveVisit(visit, 'Supabase Sync'));
-      remoteCases.forEach(caseRecord => saveCase(caseRecord, 'Supabase Sync'));
-      await syncWorkFrontCacheFromDb();
+      const remoteVisits = await getVisitsFromDb();
+      remoteVisits.forEach((visit) => saveVisit(visit, 'Supabase Sync'));
     } catch (err) {
-      console.warn('Could not mirror Supabase operational data into dashboard cache:', err);
+      console.warn('Could not mirror Supabase visits into dashboard cache:', err);
     }
   };
 
   useEffect(() => {
-    if (!user?.id) return;
+    const loaded = getInspections();
+    setInspections(loaded);
+    setPendingSyncCount(getPendingSyncCount());
 
-    refreshData();
-    syncRemoteOperationalToLocal().then(refreshData);
+    syncRemoteVisitsToLocal().then(refreshData);
 
-    const unsubNetwork = subscribeToNetworkStatus(online => {
+    const unsubNetwork = subscribeToNetworkStatus((online) => {
       setIsOnline(online);
       if (online) handleTriggerSync();
     });
 
     const unsubRealtime = subscribeToOperationalRealtime((table, payload) => {
       console.log(`[Realtime Sync] Change detected on ${table}:`, payload);
-      if (['visits', 'visit_assignments', 'cases', 'work_fronts'].includes(table)) {
-        syncRemoteOperationalToLocal().then(refreshData);
+      if (table === 'visits' || table === 'visit_assignments') {
+        syncRemoteVisitsToLocal().then(refreshData);
       } else {
         refreshData();
       }
@@ -98,18 +93,13 @@ const AppInner: React.FC = () => {
       unsubNetwork();
       unsubRealtime();
     };
-  }, [user?.id]);
-
-  useEffect(() => {
-    setActiveView('dashboard');
-    setSelectedVisitForField(undefined);
-  }, [user?.id, profile?.role]);
+  }, []);
 
   const handleTriggerSync = async () => {
     setIsSyncing(true);
     try {
       await processSyncQueue();
-      await syncRemoteOperationalToLocal();
+      await syncRemoteVisitsToLocal();
       refreshData();
     } catch (err) {
       console.warn('Sync queue error:', err);
@@ -119,7 +109,6 @@ const AppInner: React.FC = () => {
   };
 
   const handleSaveInspection = (updated: PropertyInspection) => {
-    if (!isProfessional(profile?.role)) return;
     saveInspection(updated);
     refreshData();
     setSelectedInspection(updated);
@@ -135,84 +124,14 @@ const AppInner: React.FC = () => {
     setActiveView('report');
   };
 
-  const roleAllowsView = (view: MainNavView) => {
-    const role = getRoleCategory(profile?.role);
-    if (view === 'dashboard' || view === 'references') return true;
-
-    if (role === 'PROFESIONAL') {
-      return [
-        'agenda','visits','cases','work-fronts','materials','deliveries','team',
-        'inspections','field-mode','technical-review','client-approval','report'
-      ].includes(view);
-    }
-
-    if (role === 'COORDINADOR' || role === 'GERENCIA') {
-      return [
-        'agenda','visits','cases','work-fronts','materials','deliveries','billing',
-        'team','inspections','report'
-      ].includes(view);
-    }
-
-    return ['cases','work-fronts','materials','deliveries','team'].includes(view);
-  };
-
   const handleNavigate = (view: MainNavView) => {
-    if (view === 'references') return setIsReferencesModalOpen(true);
-    if (!roleAllowsView(view)) return setActiveView('dashboard');
-    if (view === 'field-mode') return;
-    setActiveView(view);
-  };
-
-  const openNewCase = () => {
-    if (isPlanner(profile?.role)) setIsNewCaseModalOpen(true);
-  };
-
-  const openScheduleVisit = () => {
-    if (isPlanner(profile?.role)) setIsScheduleVisitModalOpen(true);
-  };
-
-  const openEmergency = () => {
-    if (isPlanner(profile?.role)) setIsEmergencyModalOpen(true);
+    if (view === 'references') setIsReferencesModalOpen(true);
+    else setActiveView(view);
   };
 
   const handleStartFieldMode = (visit?: VisitRecord) => {
-    if (!visit || !isProfessional(profile?.role)) {
-      window.alert('El modo campo solo puede iniciarse desde una visita asignada al profesional autenticado.');
-      return;
-    }
-
-    const assignedId = (visit as any).responsibleProfessionalId || '';
-    const assignedName = (visit.responsibleProfessional || '').trim().toLowerCase();
-    const myName = (profile?.full_name || '').trim().toLowerCase();
-    const assignedToMe = Boolean(
-      (user?.id && assignedId === user.id) ||
-      (myName && assignedName === myName)
-    );
-
-    if (!assignedToMe) {
-      window.alert('Esta visita está asignada a otro profesional. No puedes iniciar ni editar su inspección.');
-      return;
-    }
-
     setSelectedVisitForField(visit);
     setActiveView('field-mode');
-  };
-
-  const handleFinalizeFieldInspection = async () => {
-    if (selectedVisitForField?.id && user?.id) {
-      const ok = await finishVisitInDb(
-        selectedVisitForField.id,
-        user.id,
-        profile?.full_name || user.email || 'Profesional SIPRE'
-      );
-      if (!ok) {
-        window.alert('La inspección se guardó localmente, pero no fue posible marcar la visita como terminada en Supabase. Revisa la conexión e inténtalo nuevamente.');
-        return;
-      }
-      await syncRemoteOperationalToLocal();
-      refreshData();
-    }
-    setActiveView('technical-review');
   };
 
   if (authLoading) {
@@ -238,8 +157,6 @@ const AppInner: React.FC = () => {
     );
   }
 
-  const planner = isPlanner(profile?.role);
-
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-cyan-500 selection:text-white">
       <Header
@@ -252,53 +169,80 @@ const AppInner: React.FC = () => {
         activeView={activeView}
         onNavigate={handleNavigate}
         onOpenSupabaseModal={() => setIsSupabaseModalOpen(true)}
-        onOpenNewCaseModal={openNewCase}
-        onOpenScheduleVisitModal={openScheduleVisit}
-        onOpenEmergencyModal={openEmergency}
+        onOpenNewCaseModal={() => setIsNewCaseModalOpen(true)}
+        onOpenScheduleVisitModal={() => setIsScheduleVisitModalOpen(true)}
+        onOpenEmergencyModal={() => setIsEmergencyModalOpen(true)}
       />
 
       <main className="flex-1 pb-10">
         {activeView === 'dashboard' && (
           <Dashboard
             onNavigate={handleNavigate}
-            onOpenNewCaseModal={openNewCase}
-            onOpenScheduleVisitModal={openScheduleVisit}
+            onOpenNewCaseModal={() => setIsNewCaseModalOpen(true)}
+            onOpenScheduleVisitModal={() => setIsScheduleVisitModalOpen(true)}
           />
         )}
-        {activeView === 'agenda' && <AgendaView onOpenScheduleVisitModal={openScheduleVisit} />}
+
+        {activeView === 'agenda' && (
+          <AgendaView onOpenScheduleVisitModal={() => setIsScheduleVisitModalOpen(true)} />
+        )}
+
         {activeView === 'cases' && (
           <CasesView
-            onOpenNewCaseModal={openNewCase}
-            onOpenScheduleVisitModal={openScheduleVisit}
-            onStartFieldMode={handleStartFieldMode}
-            onNavigateToWorkFronts={() => handleNavigate('work-fronts')}
+            onOpenNewCaseModal={() => setIsNewCaseModalOpen(true)}
+            onOpenScheduleVisitModal={() => setIsScheduleVisitModalOpen(true)}
+            onStartFieldMode={(visit) => handleStartFieldMode(visit)}
+            onNavigateToWorkFronts={() => setActiveView('work-fronts')}
           />
         )}
-        {activeView === 'visits' && <VisitsView onOpenScheduleVisitModal={openScheduleVisit} onStartFieldMode={handleStartFieldMode} />}
-        {activeView === 'work-fronts' && <WorkFrontsView onNavigateToMaterials={() => handleNavigate('materials')} onNavigateToDeliveries={() => handleNavigate('deliveries')} />}
-        {activeView === 'materials' && <MaterialsView onNavigateToDeliveries={() => handleNavigate('deliveries')} />}
+
+        {activeView === 'visits' && (
+          <VisitsView
+            onOpenScheduleVisitModal={() => setIsScheduleVisitModalOpen(true)}
+            onStartFieldMode={(visit) => handleStartFieldMode(visit)}
+          />
+        )}
+
+        {activeView === 'work-fronts' && (
+          <WorkFrontsView
+            onNavigateToMaterials={() => setActiveView('materials')}
+            onNavigateToDeliveries={() => setActiveView('deliveries')}
+          />
+        )}
+
+        {activeView === 'materials' && (
+          <MaterialsView onNavigateToDeliveries={() => setActiveView('deliveries')} />
+        )}
+
         {activeView === 'deliveries' && <DeliveriesView />}
         {activeView === 'billing' && <BillingView />}
         {activeView === 'team' && <TeamView />}
-        {activeView === 'inspections' && <CoordinatorOperations inspections={inspections} onSelectInspection={handleSelectInspection} onViewReport={handleViewReport} />}
-        {activeView === 'field-mode' && selectedVisitForField && isProfessional(profile?.role) && (
+
+        {activeView === 'inspections' && (
+          <CoordinatorOperations
+            inspections={inspections}
+            onSelectInspection={handleSelectInspection}
+            onViewReport={handleViewReport}
+          />
+        )}
+
+        {activeView === 'field-mode' && (
           <FieldModeView
-            onBackToDashboard={() => setActiveView('visits')}
-            onFinalizeToTechnicalReview={handleFinalizeFieldInspection}
+            onBackToDashboard={() => setActiveView('dashboard')}
+            onFinalizeToTechnicalReview={() => setActiveView('technical-review')}
             initialVisit={selectedVisitForField}
           />
         )}
-        {activeView === 'technical-review' && isProfessional(profile?.role) && (
-          <TechnicalReviewView
-            visit={selectedVisitForField}
-            onNavigateToClientApproval={() => setActiveView('client-approval')}
-            onBackToDashboard={() => setActiveView('dashboard')}
-          />
+
+        {activeView === 'technical-review' && (
+          <TechnicalReviewView onNavigateToClientApproval={() => setActiveView('client-approval')} />
         )}
-        {activeView === 'client-approval' && isProfessional(profile?.role) && (
+
+        {activeView === 'client-approval' && (
           <ClientApprovalView onBackToDashboard={() => setActiveView('dashboard')} />
         )}
-        {activeView === 'form' && selectedInspection && isProfessional(profile?.role) && (
+
+        {activeView === 'form' && selectedInspection && (
           <InspectionForm
             inspection={selectedInspection}
             onSaveInspection={handleSaveInspection}
@@ -307,27 +251,35 @@ const AppInner: React.FC = () => {
             currentRole={currentRole}
           />
         )}
+
         {activeView === 'report' && selectedInspection && (
-          <ReportView inspection={selectedInspection} onBack={() => setActiveView('dashboard')} />
+          <ReportView inspection={selectedInspection} onBack={() => setActiveView('inspections')} />
         )}
       </main>
 
       <NewCaseModal
-        isOpen={isNewCaseModalOpen && planner}
+        isOpen={isNewCaseModalOpen}
         onClose={() => setIsNewCaseModalOpen(false)}
-        onCaseCreated={() => syncRemoteOperationalToLocal().then(refreshData)}
+        onCaseCreated={() => refreshData()}
       />
+
       <ScheduleVisitModal
-        isOpen={isScheduleVisitModalOpen && planner}
+        isOpen={isScheduleVisitModalOpen}
         onClose={() => setIsScheduleVisitModalOpen(false)}
-        onVisitCreated={() => syncRemoteOperationalToLocal().then(refreshData)}
+        onVisitCreated={() => syncRemoteVisitsToLocal().then(refreshData)}
       />
-      <EmergencyConfigModal isOpen={isEmergencyModalOpen && planner} onClose={() => setIsEmergencyModalOpen(false)} />
+
+      <EmergencyConfigModal isOpen={isEmergencyModalOpen} onClose={() => setIsEmergencyModalOpen(false)} />
       <TechnicalReferencesModal isOpen={isReferencesModalOpen} onClose={() => setIsReferencesModalOpen(false)} />
       <SupabaseConfigModal isOpen={isSupabaseModalOpen} onClose={() => setIsSupabaseModalOpen(false)} />
     </div>
   );
 };
 
-export const App: React.FC = () => <AuthProvider><AppInner /></AuthProvider>;
+export const App: React.FC = () => (
+  <AuthProvider>
+    <AppInner />
+  </AuthProvider>
+);
+
 export default App;

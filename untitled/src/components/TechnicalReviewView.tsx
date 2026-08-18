@@ -1,178 +1,245 @@
 import React, { useState } from 'react';
-import { FileText, CheckCircle2, AlertTriangle, ArrowLeft, Loader2 } from 'lucide-react';
-import { RepairDecisionOption, TechnicalDecisionRecord, VisitRecord } from '../types';
+import { 
+  FileText, 
+  CheckCircle2, 
+  AlertTriangle, 
+  ShieldCheck, 
+  UserCheck, 
+  ArrowRight, 
+  Info, 
+  Clock, 
+  Wrench,
+  Search,
+  Filter,
+  Lock
+} from 'lucide-react';
+import { RepairDecisionOption, TechnicalDecisionRecord, TechnicalDecisionType } from '../types';
 import { useAuth } from '../context/AuthContext';
-import { isProfessional } from '../lib/roles';
-import { saveTechnicalDecisionInDb } from '../lib/supabaseService';
+import { canIssueTechnicalConclusion, getDisplayRole } from '../lib/roles';
+import { recordActivity } from '../lib/supabaseService';
 
 interface TechnicalReviewViewProps {
-  visit?: VisitRecord;
   onNavigateToClientApproval?: () => void;
-  onBackToDashboard?: () => void;
 }
 
 export const TechnicalReviewView: React.FC<TechnicalReviewViewProps> = ({
-  visit,
   onNavigateToClientApproval,
-  onBackToDashboard,
 }) => {
   const { user, profile } = useAuth();
-  const [selectedDecision, setSelectedDecision] = useState<RepairDecisionOption>('NO REQUIERE INTERVENCIÓN');
+  const [selectedDecision, setSelectedDecision] = useState<RepairDecisionOption>('REQUIERE INTERVENCIÓN');
   const [formData, setFormData] = useState({
-    technicalJustification: '',
-    proposedIntervention: '',
-    temporaryMeasures: '',
-    additionalStudies: '',
-    finalRecommendations: '',
-    responsibleProfessional: profile?.full_name || visit?.responsibleProfessional || '',
-    professionalLicense: profile?.professional_license || '',
+    technicalJustification: 'Basado en los hallazgos en campo (fisuración diagonal por cortante en columna C-2 del primer piso y pérdida de confinamiento), la estructura requiere reforzamiento y rigidización para restablecer la capacidad sismorresistente según NSR-10.',
+    proposedIntervention: 'Encamisado de concreto reforzado o refuerzo con polímeros reforzados con fibra de carbono (CFRP) en columna C-2, más inyección epóxica en fisuras estructurales.',
+    temporaryMeasures: 'Instalación inmediata de puntales metálicos de alta capacidad (apuntalamiento temporal) en el pórtico adyacente a la columna C-2.',
+    additionalStudies: 'Extracción de núcleos de concreto (ASTM C42) y ensayo de esclerometría para verificar resistencia a la compresión f\'c in-situ.',
+    responsibleProfessional: profile?.full_name || 'Ing. Especialista en Estructuras',
+    professionalLicense: profile?.professional_license || 'CPN-12345-COL',
   });
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  const userAllowed = isProfessional(profile?.role);
+  const [devMessage, setDevMessage] = useState<string | null>(null);
+  const userAllowed = canIssueTechnicalConclusion(profile?.role);
 
-  const decisionOptions: { type: RepairDecisionOption; desc: string }[] = [
-    { type: 'NO REQUIERE INTERVENCIÓN', desc: 'La visita puede cerrarse sin frente de reparación.' },
-    { type: 'REQUIERE INTERVENCIÓN', desc: 'Se requiere reparación o intervención técnica.' },
-    { type: 'REQUIERE EVALUACIÓN ADICIONAL', desc: 'Se requiere análisis estructural o evaluación especializada.' },
-    { type: 'REQUIERE ENSAYOS', desc: 'Se requieren ensayos o verificaciones adicionales.' },
-    { type: 'REQUIERE MONITOREO', desc: 'Se requiere seguimiento periódico.' },
-    { type: 'INFORMACIÓN INSUFICIENTE', desc: 'No existe información suficiente para concluir.' },
+  const decisionOptions: { type: TechnicalDecisionType; desc: string; color: string }[] = [
+    { type: 'NO REQUIERE INTERVENCIÓN', desc: 'Afectaciones menores o cosméticas sin compromiso estructural.', color: 'text-emerald-400 border-emerald-700/60 bg-emerald-950/40' },
+    { type: 'REQUIERE INTERVENCIÓN', desc: 'Daños estructurales que exigen obras de reparación o reforzamiento.', color: 'text-rose-400 border-rose-700/60 bg-rose-950/40' },
+    { type: 'REQUIERE EVALUACIÓN ADICIONAL', desc: 'Análisis detallado de vulnerabilidad o modelación numérica requerida.', color: 'text-amber-400 border-amber-700/60 bg-amber-950/40' },
+    { type: 'REQUIERE ENSAYOS', desc: 'Ensayos no destructivos o destructivos (núcleos, ultrasonido, ferroscan).', color: 'text-cyan-400 border-cyan-700/60 bg-cyan-950/40' },
+    { type: 'REQUIERE INFORMACIÓN ADICIONAL', desc: 'Pendiente de entrega de planos o memorias de cálculo originales.', color: 'text-purple-400 border-purple-700/60 bg-purple-950/40' },
   ];
 
-  const handleSaveDecision = async (e: React.FormEvent) => {
+  const handleSaveDecision = (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
-    setMessage(null);
-
-    if (!userAllowed) return setError('Solo el profesional responsable puede emitir y finalizar el concepto técnico.');
-    if (!visit?.id || !visit?.caseId) return setError('No se encontró la visita o el expediente asociado. Regresa a Mis Visitas y abre nuevamente la inspección.');
-    if (!formData.technicalJustification.trim()) return setError('Ingresa la justificación técnica antes de finalizar el informe.');
-    if (!formData.responsibleProfessional.trim()) return setError('Falta el nombre del profesional responsable.');
-
-    setSaving(true);
-    try {
-      const decision: TechnicalDecisionRecord = {
-        id: `TD-${visit.id}`,
-        caseId: visit.caseId,
-        visitId: visit.id,
-        decision: selectedDecision,
-        technicalJustification: formData.technicalJustification.trim(),
-        proposedIntervention: formData.proposedIntervention.trim(),
-        temporaryMeasures: formData.temporaryMeasures.trim(),
-        additionalStudies: formData.additionalStudies.trim(),
-        finalRecommendations: formData.finalRecommendations.trim(),
-        responsibleProfessional: formData.responsibleProfessional.trim(),
-        professionalLicense: formData.professionalLicense.trim(),
-        date: new Date().toISOString(),
-      };
-
-      const ok = await saveTechnicalDecisionInDb(decision, user?.id);
-      if (!ok) throw new Error('Supabase no confirmó el guardado del concepto técnico.');
-
-      setMessage('Informe técnico finalizado y concepto profesional guardado en SIPRE.');
-
-      setTimeout(() => {
-        const needsClientApproval = selectedDecision === 'REQUIERE INTERVENCIÓN' || selectedDecision === 'REQUIERE REPARACIÓN';
-        if (needsClientApproval && onNavigateToClientApproval) onNavigateToClientApproval();
-        else if (onBackToDashboard) onBackToDashboard();
-      }, 1200);
-    } catch (e: any) {
-      setError(e?.message || 'No se pudo finalizar el informe técnico.');
-    } finally {
-      setSaving(false);
+    if (!userAllowed) {
+      setDevMessage('Acción no permitida para rol Operativo. La emisión de dictámenes técnicos requiere rol Profesional o Gerencia.');
+      setTimeout(() => setDevMessage(null), 4000);
+      return;
     }
+
+    recordActivity(
+      `Dictamen técnico emitido: ${selectedDecision}`,
+      { decision: selectedDecision, professional: formData.responsibleProfessional },
+      {
+        userId: user?.id,
+        userName: profile?.full_name || formData.responsibleProfessional,
+        userRole: profile?.role,
+        entityType: 'technical_decision',
+      }
+    );
+
+    setDevMessage('Concepto técnico estructural registrado exitosamente.');
+    setTimeout(() => {
+      setDevMessage(null);
+      if (onNavigateToClientApproval) {
+        onNavigateToClientApproval();
+      }
+    }, 2000);
   };
 
   return (
     <div id="sipre-technical-review-screen" className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="text-xs font-mono font-bold tracking-widest text-cyan-400 uppercase">Cierre del Informe Profesional</div>
-            <h1 className="text-2xl font-black text-white flex items-center gap-2 mt-1"><FileText className="w-6 h-6 text-cyan-400" />Revisión Técnica y Concepto Final</h1>
-            <p className="text-xs text-slate-400 mt-1">La visita ya fue terminada. Este paso guarda el concepto técnico final del profesional en Supabase.</p>
+      
+      {/* Header */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center space-x-2">
+            <span className="text-xs font-mono font-bold tracking-widest text-cyan-400 uppercase">
+              Dictamen Especializado
+            </span>
           </div>
-          {onBackToDashboard && (
-            <button onClick={onBackToDashboard} className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1"><ArrowLeft className="w-4 h-4" />Volver</button>
-          )}
+          <h1 className="text-2xl font-black text-white tracking-tight flex items-center space-x-2.5">
+            <FileText className="w-6 h-6 text-cyan-400" />
+            <span>Revisión Técnica y Concepto Estructural</span>
+          </h1>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Emisión de dictamen profesional, prescripción de medidas y decisión de intervención
+          </p>
         </div>
 
-        {visit && (
-          <div className="mt-4 bg-slate-950 border border-slate-800 rounded-xl p-4 text-xs grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <div><span className="text-slate-500">Cliente:</span> <strong className="text-white">{visit.clientName}</strong></div>
-            <div><span className="text-slate-500">Visita:</span> <strong className="text-white">{visit.id}</strong></div>
-            <div><span className="text-slate-500">Dirección:</span> <strong className="text-white">{visit.address}</strong></div>
-            <div><span className="text-slate-500">Profesional:</span> <strong className="text-cyan-300">{visit.responsibleProfessional}</strong></div>
-          </div>
-        )}
+        <span className="bg-amber-950/80 text-amber-300 border border-amber-700/80 px-3 py-1.5 rounded-xl text-xs font-bold font-mono">
+          0 Casos Pendientes en Cola
+        </span>
       </div>
 
-      {message && <div className="p-4 rounded-xl bg-emerald-950 border border-emerald-700 text-emerald-200 text-sm font-bold flex items-center gap-2"><CheckCircle2 className="w-5 h-5" />{message}</div>}
-      {error && <div className="p-4 rounded-xl bg-red-950 border border-red-800 text-red-200 text-sm flex items-center gap-2"><AlertTriangle className="w-5 h-5" />{error}</div>}
+      {devMessage && (
+        <div className="p-4 rounded-xl bg-amber-950/80 border border-amber-600 text-amber-200 font-bold text-center flex items-center justify-center space-x-2 animate-pulse text-xs">
+          <CheckCircle2 className="w-5 h-5 text-amber-400" />
+          <span>{devMessage}</span>
+        </div>
+      )}
 
-      <form onSubmit={handleSaveDecision} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5 text-xs text-slate-200">
+      {/* Empty State Banner */}
+      <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 text-center space-y-3">
+        <div className="w-12 h-12 mx-auto rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-500">
+          <Clock className="w-6 h-6" />
+        </div>
         <div>
-          <label className="block text-slate-300 font-bold mb-2">Decisión técnica *</label>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-            {decisionOptions.map(opt => (
+          <h3 className="text-sm font-bold text-slate-200">No hay expedientes pendientes de revisión técnica</h3>
+          <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
+            Cuando se finalice una visita en Modo Campo, el expediente ingresará automáticamente a esta bandeja para el concepto del ingeniero especialista.
+          </p>
+        </div>
+      </div>
+
+      {/* Technical Review Form Example / Simulator */}
+      <form onSubmit={handleSaveDecision} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5 text-xs text-slate-200">
+        <div className="border-b border-slate-800 pb-3 flex items-center justify-between">
+          <h2 className="text-sm font-bold text-white uppercase tracking-wider">
+            Formulario de Decisión Técnica Estructural
+          </h2>
+          <span className="text-[11px] font-mono text-cyan-400">NSR-10 / AIS 410</span>
+        </div>
+
+        {/* 5 Decision Options Selector */}
+        <div className="space-y-2">
+          <label className="block text-slate-400 font-semibold mb-1">Decisión Técnica Principal *</label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+            {decisionOptions.map((opt) => (
               <button
                 key={opt.type}
                 type="button"
                 onClick={() => setSelectedDecision(opt.type)}
-                className={`p-3 rounded-xl border text-left ${selectedDecision === opt.type ? 'bg-cyan-950 border-cyan-500 text-cyan-200' : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'}`}
+                className={`p-3 rounded-xl border text-left flex flex-col justify-between transition-all ${
+                  selectedDecision === opt.type
+                    ? `${opt.color} shadow-lg ring-1 ring-cyan-400`
+                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
+                }`}
               >
-                <div className="font-black text-xs">{opt.type}</div>
-                <div className="text-[10px] mt-1">{opt.desc}</div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-black text-xs">{opt.type}</span>
+                  {selectedDecision === opt.type && (
+                    <CheckCircle2 className="w-4 h-4 text-cyan-400 flex-shrink-0" />
+                  )}
+                </div>
+                <p className="text-[10px] text-slate-400 leading-tight">{opt.desc}</p>
               </button>
             ))}
           </div>
         </div>
 
-        <div>
-          <label className="block text-slate-300 font-bold mb-1">Justificación técnica *</label>
-          <textarea rows={5} required value={formData.technicalJustification} onChange={e => setFormData({ ...formData, technicalJustification: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:outline-none focus:border-cyan-500" placeholder="Conclusión sustentada en los hallazgos de la visita..." />
+        {/* Form Fields */}
+        <div className="space-y-4 pt-2">
+          <div>
+            <label className="block text-slate-400 font-semibold mb-1">Justificación Técnica del Dictamen *</label>
+            <textarea
+              rows={3}
+              value={formData.technicalJustification}
+              onChange={(e) => setFormData({ ...formData, technicalJustification: e.target.value })}
+              className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl p-3 focus:outline-none focus:border-cyan-500"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-slate-400 font-semibold mb-1">Intervención Propuesta / Alcance Técnico</label>
+            <textarea
+              rows={3}
+              value={formData.proposedIntervention}
+              onChange={(e) => setFormData({ ...formData, proposedIntervention: e.target.value })}
+              className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl p-3 focus:outline-none focus:border-cyan-500"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-slate-400 font-semibold mb-1">Medidas Temporales / Apuntalamientos</label>
+              <textarea
+                rows={2}
+                value={formData.temporaryMeasures}
+                onChange={(e) => setFormData({ ...formData, temporaryMeasures: e.target.value })}
+                className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl p-3 focus:outline-none focus:border-cyan-500"
+              />
+            </div>
+            <div>
+              <label className="block text-slate-400 font-semibold mb-1">Estudios Adicionales / Ensayos Requeridos</label>
+              <textarea
+                rows={2}
+                value={formData.additionalStudies}
+                onChange={(e) => setFormData({ ...formData, additionalStudies: e.target.value })}
+                className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl p-3 focus:outline-none focus:border-cyan-500"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-950 p-4 rounded-xl border border-slate-800">
+            <div>
+              <label className="block text-slate-400 font-semibold mb-1">Profesional Especialista Responsable</label>
+              <input
+                type="text"
+                value={formData.responsibleProfessional}
+                onChange={(e) => setFormData({ ...formData, responsibleProfessional: e.target.value })}
+                className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg p-2.5 focus:outline-none focus:border-cyan-500"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-slate-400 font-semibold mb-1">Matrícula Profesional (COPNIA / CPN)</label>
+              <input
+                type="text"
+                value={formData.professionalLicense}
+                onChange={(e) => setFormData({ ...formData, professionalLicense: e.target.value })}
+                className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg p-2.5 focus:outline-none focus:border-cyan-500 font-mono"
+                required
+              />
+            </div>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-slate-300 font-bold mb-1">Intervención propuesta</label>
-            <textarea rows={3} value={formData.proposedIntervention} onChange={e => setFormData({ ...formData, proposedIntervention: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:outline-none focus:border-cyan-500" />
-          </div>
-          <div>
-            <label className="block text-slate-300 font-bold mb-1">Medidas temporales</label>
-            <textarea rows={3} value={formData.temporaryMeasures} onChange={e => setFormData({ ...formData, temporaryMeasures: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:outline-none focus:border-cyan-500" />
-          </div>
-          <div>
-            <label className="block text-slate-300 font-bold mb-1">Estudios / ensayos adicionales</label>
-            <textarea rows={3} value={formData.additionalStudies} onChange={e => setFormData({ ...formData, additionalStudies: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:outline-none focus:border-cyan-500" />
-          </div>
-          <div>
-            <label className="block text-slate-300 font-bold mb-1">Recomendaciones finales</label>
-            <textarea rows={3} value={formData.finalRecommendations} onChange={e => setFormData({ ...formData, finalRecommendations: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:outline-none focus:border-cyan-500" />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-950 p-4 rounded-xl border border-slate-800">
-          <div>
-            <label className="block text-slate-300 font-bold mb-1">Profesional responsable *</label>
-            <input required value={formData.responsibleProfessional} onChange={e => setFormData({ ...formData, responsibleProfessional: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white" />
-          </div>
-          <div>
-            <label className="block text-slate-300 font-bold mb-1">Matrícula profesional</label>
-            <input value={formData.professionalLicense} onChange={e => setFormData({ ...formData, professionalLicense: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white" />
-          </div>
-        </div>
-
-        <div className="flex justify-end pt-3 border-t border-slate-800">
-          <button disabled={saving || !userAllowed} type="submit" className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white px-6 py-2.5 rounded-xl font-bold flex items-center gap-2">
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-            FINALIZAR INFORME TÉCNICO
+        {/* Footer actions */}
+        <div className="flex items-center justify-between pt-3 border-t border-slate-800">
+          <span className="text-[11px] text-slate-500">
+            Al registrar el concepto, el caso avanzará a la etapa de <strong>Aprobación del Cliente</strong>.
+          </span>
+          <button
+            type="submit"
+            className="bg-cyan-600 hover:bg-cyan-500 text-white px-6 py-2.5 rounded-xl font-bold flex items-center space-x-1.5 shadow-lg shadow-cyan-600/25 active:scale-95 transition-all"
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            <span>EMITIR CONCEPTO TÉCNICO</span>
           </button>
         </div>
+
       </form>
+
     </div>
   );
 };
