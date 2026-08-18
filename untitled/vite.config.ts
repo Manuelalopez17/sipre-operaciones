@@ -11,8 +11,7 @@ function sipreRuntimeFixes(): Plugin {
       let next = code;
 
       if (id.endsWith('/src/components/FieldModeView.tsx') || id.endsWith('\\src\\components\\FieldModeView.tsx')) {
-        // 1) Keep the camera/video/audio/document inputs mounted for every field step.
-        // Previously they only existed in Step 7, so Step 5 buttons were clicking null refs.
+        // Keep camera/video/audio/document inputs mounted for every field step.
         const mediaInputs = /\s*<input ref=\{photoCaptureRef\}[\s\S]*?<input ref=\{documentFileRef\}[\s\S]*?\/>/m;
         const mediaMatch = next.match(mediaInputs);
         if (mediaMatch) {
@@ -24,7 +23,6 @@ function sipreRuntimeFixes(): Plugin {
           );
         }
 
-        // 2) Show upload errors in every field step, not only in Step 7.
         if (!next.includes('id="field-media-error-global"')) {
           next = next.replace(
             '      {/* 10-Step Progress Indicator */}',
@@ -32,7 +30,7 @@ function sipreRuntimeFixes(): Plugin {
           );
         }
 
-        // 3) Work fronts created from a visit must be written to Supabase, not only localStorage.
+        // Work fronts created from a visit must be written to Supabase.
         if (!next.includes("from '../lib/workFrontRemote'")) {
           next = next.replace(
             "import { uploadEvidenceFile, getEvidenceFilesFromDb } from '../lib/supabaseService';",
@@ -49,31 +47,19 @@ function sipreRuntimeFixes(): Plugin {
         );
       }
 
-      if (id.endsWith('/src/App.tsx') || id.endsWith('\\src\\App.tsx')) {
-        // Replace the legacy localStorage work-front screen with the Supabase-backed screen.
+      if (id.endsWith('/src/components/Dashboard.tsx') || id.endsWith('\\src\\components\\Dashboard.tsx')) {
+        // The dashboard perspective comes only from the authenticated Supabase profile.
+        // Keep the original rich dashboard, but remove the manual role simulator.
         next = next.replace(
-          "import { WorkFrontsView } from './components/WorkFrontsView';",
-          "import { WorkFrontsView } from './components/WorkFrontsRemoteView';"
+          "const [selectedRoleView, setSelectedRoleView] = useState<'PROFESIONAL' | 'COORDINADOR' | 'GERENCIA' | 'OPERATIVO'>(userRoleCategory);",
+          "const selectedRoleView = userRoleCategory;\n  const setSelectedRoleView = (_role: 'PROFESIONAL' | 'COORDINADOR' | 'GERENCIA' | 'OPERATIVO') => {};"
         );
-
-        if (!next.includes("from './lib/workFrontRemote'")) {
-          next = next.replace(
-            "import { subscribeToOperationalRealtime } from './lib/supabaseService';",
-            "import { subscribeToOperationalRealtime } from './lib/supabaseService';\nimport { syncWorkFrontCacheFromDb } from './lib/workFrontRemote';"
-          );
-        }
-
-        // Refresh the local dashboard cache from Supabase on app startup.
         next = next.replace(
-          '    const loaded = getInspections();\n    setInspections(loaded);',
-          "    const loaded = getInspections();\n    setInspections(loaded);\n    syncWorkFrontCacheFromDb().then(() => setInspections(prev => [...prev]));"
+          '          {/* Role Perspective Switcher for Initial Team Verification */}\n          <div className="flex items-center gap-1 bg-slate-950/80 p-1.5 rounded-xl border border-slate-800">',
+          '          {/* Role is fixed by authenticated user */}\n          <div className="hidden">'
         );
-
-        // When Realtime reports a change, refresh the work-front cache before re-rendering Dashboard.
-        next = next.replace(
-          '      refreshData();\n    });',
-          '      syncWorkFrontCacheFromDb().finally(() => refreshData());\n    });'
-        );
+        // Field mode must always start from an assigned visit, never from a generic dashboard shortcut.
+        next = next.replaceAll("onClick={() => onNavigate('field-mode')}", "onClick={() => onNavigate('visits')}");
       }
 
       return next === code ? null : { code: next, map: null };
