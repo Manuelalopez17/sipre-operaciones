@@ -10,9 +10,13 @@ import {
   Clock, 
   Wrench,
   Search,
-  Filter
+  Filter,
+  Lock
 } from 'lucide-react';
-import { TechnicalDecisionType, TechnicalDecisionRecord } from '../types';
+import { RepairDecisionOption, TechnicalDecisionRecord, TechnicalDecisionType } from '../types';
+import { useAuth } from '../context/AuthContext';
+import { canIssueTechnicalConclusion, getDisplayRole } from '../lib/roles';
+import { recordActivity } from '../lib/supabaseService';
 
 interface TechnicalReviewViewProps {
   onNavigateToClientApproval?: () => void;
@@ -21,17 +25,19 @@ interface TechnicalReviewViewProps {
 export const TechnicalReviewView: React.FC<TechnicalReviewViewProps> = ({
   onNavigateToClientApproval,
 }) => {
-  const [selectedDecision, setSelectedDecision] = useState<TechnicalDecisionType>('REQUIERE INTERVENCIÓN');
+  const { user, profile } = useAuth();
+  const [selectedDecision, setSelectedDecision] = useState<RepairDecisionOption>('REQUIERE INTERVENCIÓN');
   const [formData, setFormData] = useState({
     technicalJustification: 'Basado en los hallazgos en campo (fisuración diagonal por cortante en columna C-2 del primer piso y pérdida de confinamiento), la estructura requiere reforzamiento y rigidización para restablecer la capacidad sismorresistente según NSR-10.',
     proposedIntervention: 'Encamisado de concreto reforzado o refuerzo con polímeros reforzados con fibra de carbono (CFRP) en columna C-2, más inyección epóxica en fisuras estructurales.',
     temporaryMeasures: 'Instalación inmediata de puntales metálicos de alta capacidad (apuntalamiento temporal) en el pórtico adyacente a la columna C-2.',
     additionalStudies: 'Extracción de núcleos de concreto (ASTM C42) y ensayo de esclerometría para verificar resistencia a la compresión f\'c in-situ.',
-    responsibleProfessional: 'Ing. Especialista en Estructuras',
-    professionalLicense: 'CPN-12345-COL',
+    responsibleProfessional: profile?.full_name || 'Ing. Especialista en Estructuras',
+    professionalLicense: profile?.professional_license || 'CPN-12345-COL',
   });
 
   const [devMessage, setDevMessage] = useState<string | null>(null);
+  const userAllowed = canIssueTechnicalConclusion(profile?.role);
 
   const decisionOptions: { type: TechnicalDecisionType; desc: string; color: string }[] = [
     { type: 'NO REQUIERE INTERVENCIÓN', desc: 'Afectaciones menores o cosméticas sin compromiso estructural.', color: 'text-emerald-400 border-emerald-700/60 bg-emerald-950/40' },
@@ -43,13 +49,30 @@ export const TechnicalReviewView: React.FC<TechnicalReviewViewProps> = ({
 
   const handleSaveDecision = (e: React.FormEvent) => {
     e.preventDefault();
-    setDevMessage('Persistencia pendiente de habilitación.');
+    if (!userAllowed) {
+      setDevMessage('Acción no permitida para rol Operativo. La emisión de dictámenes técnicos requiere rol Profesional o Gerencia.');
+      setTimeout(() => setDevMessage(null), 4000);
+      return;
+    }
+
+    recordActivity(
+      `Dictamen técnico emitido: ${selectedDecision}`,
+      { decision: selectedDecision, professional: formData.responsibleProfessional },
+      {
+        userId: user?.id,
+        userName: profile?.full_name || formData.responsibleProfessional,
+        userRole: profile?.role,
+        entityType: 'technical_decision',
+      }
+    );
+
+    setDevMessage('Concepto técnico estructural registrado exitosamente.');
     setTimeout(() => {
       setDevMessage(null);
       if (onNavigateToClientApproval) {
         onNavigateToClientApproval();
       }
-    }, 2800);
+    }, 2000);
   };
 
   return (

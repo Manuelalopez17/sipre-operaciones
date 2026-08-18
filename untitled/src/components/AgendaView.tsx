@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Calendar as CalendarIcon, 
   ChevronLeft, 
@@ -9,9 +9,11 @@ import {
   UserCheck, 
   Building,
   CheckCircle,
-  AlertTriangle
+  AlertTriangle,
+  HardHat
 } from 'lucide-react';
 import { VisitRecord } from '../types';
+import { getVisits } from '../lib/storage';
 
 interface AgendaViewProps {
   onOpenScheduleVisitModal: () => void;
@@ -20,10 +22,19 @@ interface AgendaViewProps {
 
 export const AgendaView: React.FC<AgendaViewProps> = ({
   onOpenScheduleVisitModal,
-  visits = [],
+  visits: propVisits,
 }) => {
   const [viewMode, setViewMode] = useState<'month' | 'week' | 'day'>('month');
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
+  const [visitsList, setVisitsList] = useState<VisitRecord[]>([]);
+
+  useEffect(() => {
+    if (propVisits && propVisits.length > 0) {
+      setVisitsList(propVisits);
+    } else {
+      setVisitsList(getVisits());
+    }
+  }, [propVisits]);
 
   const months = [
     'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
@@ -70,11 +81,14 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
     const days = [];
     // Previous month padding
     for (let i = 0; i < firstDayIndex; i++) {
-      days.push({ dayNumber: null, isCurrentMonth: false });
+      days.push({ dayNumber: null, isCurrentMonth: false, dateStr: '' });
     }
     // Current month days
     for (let i = 1; i <= totalDays; i++) {
-      days.push({ dayNumber: i, isCurrentMonth: true });
+      const monthStr = (month + 1).toString().padStart(2, '0');
+      const dayStr = i.toString().padStart(2, '0');
+      const dateStr = `${year}-${monthStr}-${dayStr}`;
+      days.push({ dayNumber: i, isCurrentMonth: true, dateStr });
     }
     return days;
   };
@@ -195,27 +209,42 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
 
           {/* Month day cells */}
           <div className="grid grid-cols-7 gap-2">
-            {getDaysInMonth().map((item, idx) => (
-              <div
-                key={idx}
-                className={`min-h-[85px] sm:min-h-[105px] p-2 rounded-xl border flex flex-col justify-between transition-colors ${
-                  item.isCurrentMonth
-                    ? 'bg-slate-950/70 border-slate-800/80 hover:border-slate-700'
-                    : 'bg-slate-950/20 border-slate-900/40 text-slate-700 opacity-40'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span className={`text-xs font-bold font-mono ${item.isCurrentMonth ? 'text-slate-300' : 'text-slate-700'}`}>
-                    {item.dayNumber || ''}
-                  </span>
-                </div>
+            {getDaysInMonth().map((item, idx) => {
+              const dayVisits = item.dateStr ? visitsList.filter(v => v.date === item.dateStr) : [];
+              return (
+                <div
+                  key={idx}
+                  className={`min-h-[85px] sm:min-h-[105px] p-2 rounded-xl border flex flex-col justify-between transition-colors ${
+                    item.isCurrentMonth
+                      ? 'bg-slate-950/70 border-slate-800/80 hover:border-slate-700'
+                      : 'bg-slate-950/20 border-slate-900/40 text-slate-700 opacity-40'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className={`text-xs font-bold font-mono ${item.isCurrentMonth ? 'text-slate-300' : 'text-slate-700'}`}>
+                      {item.dayNumber || ''}
+                    </span>
+                    {dayVisits.length > 0 && (
+                      <span className="w-2 h-2 rounded-full bg-cyan-400"></span>
+                    )}
+                  </div>
 
-                {/* Empty container inside day */}
-                <div className="flex-1 flex items-center justify-center">
-                  {/* Empty state: No visits */}
+                  {/* Day Visits List */}
+                  <div className="flex-1 flex flex-col gap-1 mt-1 overflow-y-auto max-h-[70px]">
+                    {dayVisits.map((v) => (
+                      <div
+                        key={v.id}
+                        className="bg-cyan-950/80 border border-cyan-800/60 rounded p-1 text-[10px] leading-tight text-cyan-200"
+                        title={`${v.clientName} - ${v.responsibleProfessional}`}
+                      >
+                        <div className="font-bold truncate">{v.startTime} {v.clientName}</div>
+                        <div className="text-[9px] text-cyan-400/80 truncate">👷 {v.responsibleProfessional}</div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -229,31 +258,33 @@ export const AgendaView: React.FC<AgendaViewProps> = ({
             </div>
             <h3 className="text-base font-bold text-white">Vista de {viewMode === 'week' ? 'Semana' : 'Día'}</h3>
             <p className="text-xs text-slate-400 max-w-md mx-auto">
-              Visualización por franjas horarias lista para sincronizar con el calendario operativo.
+              Visualización por franjas horarias sincronizada con las visitas programadas en la base operativa.
             </p>
           </div>
         </div>
       )}
 
-      {/* Professional Empty State Banner */}
-      <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-8 text-center space-y-4">
-        <div className="w-12 h-12 mx-auto rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-500">
-          <Clock className="w-6 h-6" />
+      {/* Empty State Banner shown when 0 visits exist */}
+      {visitsList.length === 0 && (
+        <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-8 text-center space-y-4">
+          <div className="w-12 h-12 mx-auto rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-500">
+            <Clock className="w-6 h-6" />
+          </div>
+          <div>
+            <h3 className="text-base font-bold text-slate-200">No hay visitas programadas</h3>
+            <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
+              Actualmente no existen inspecciones agendadas en el sistema. Puedes crear un nuevo agendamiento con cliente, dirección y profesional asignado.
+            </p>
+          </div>
+          <button
+            onClick={onOpenScheduleVisitModal}
+            className="bg-cyan-600 hover:bg-cyan-500 text-white px-5 py-2.5 rounded-xl text-xs font-bold inline-flex items-center space-x-2 shadow-lg shadow-cyan-600/20 transition-all active:scale-95"
+          >
+            <PlusCircle className="w-4 h-4" />
+            <span>+ PROGRAMAR VISITA</span>
+          </button>
         </div>
-        <div>
-          <h3 className="text-base font-bold text-slate-200">No hay visitas programadas</h3>
-          <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
-            Actualmente no existen inspecciones agendadas en el sistema. Puedes crear un nuevo agendamiento con cliente, dirección y profesional asignado.
-          </p>
-        </div>
-        <button
-          onClick={onOpenScheduleVisitModal}
-          className="bg-cyan-600 hover:bg-cyan-500 text-white px-5 py-2.5 rounded-xl text-xs font-bold inline-flex items-center space-x-2 shadow-lg shadow-cyan-600/20 transition-all active:scale-95"
-        >
-          <PlusCircle className="w-4 h-4" />
-          <span>+ PROGRAMAR VISITA</span>
-        </button>
-      </div>
+      )}
 
     </div>
   );

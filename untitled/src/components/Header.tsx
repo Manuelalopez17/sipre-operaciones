@@ -16,22 +16,30 @@ import {
   HardHat, 
   Wrench, 
   Boxes, 
+  Truck,
+  CreditCard,
   Users, 
   Smartphone, 
   Menu, 
   X,
-  UserCheck
+  UserCheck,
+  LogOut,
+  User
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { getDisplayRole } from '../lib/roles';
 
 export type MainNavView = 
   | 'dashboard' 
   | 'agenda' 
+  | 'visits'
   | 'cases' 
-  | 'visits' 
-  | 'inspections' 
-  | 'interventions' 
+  | 'work-fronts' 
   | 'materials' 
+  | 'deliveries' 
+  | 'billing' 
   | 'team' 
+  | 'inspections' 
   | 'field-mode' 
   | 'form' 
   | 'report' 
@@ -51,6 +59,7 @@ interface HeaderProps {
   onOpenSupabaseModal: () => void;
   onOpenNewCaseModal: () => void;
   onOpenScheduleVisitModal: () => void;
+  onOpenEmergencyModal?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -65,17 +74,21 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSupabaseModal,
   onOpenNewCaseModal,
   onOpenScheduleVisitModal,
+  onOpenEmergencyModal,
 }) => {
+  const { user, profile, signOut, currentEmergency } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
   const navItems = [
     { id: 'dashboard', label: 'INICIO', icon: LayoutDashboard },
     { id: 'agenda', label: 'AGENDA', icon: Calendar },
-    { id: 'cases', label: 'EXPEDIENTES', icon: FolderKanban },
     { id: 'visits', label: 'VISITAS', icon: ClipboardList },
-    { id: 'inspections', label: 'INSPECCIONES', icon: HardHat },
-    { id: 'interventions', label: 'INTERVENCIONES', icon: Wrench },
+    { id: 'cases', label: 'EXPEDIENTES', icon: FolderKanban },
+    { id: 'work-fronts', label: 'FRENTES DE OBRA', icon: Wrench },
     { id: 'materials', label: 'MATERIALES', icon: Boxes },
+    { id: 'deliveries', label: 'ENTREGAS', icon: Truck },
+    { id: 'billing', label: 'COBROS', icon: CreditCard },
     { id: 'team', label: 'EQUIPO', icon: Users },
   ] as const;
 
@@ -86,7 +99,39 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header id="sipre-header" className="sticky top-0 z-40 bg-slate-900/95 backdrop-blur border-b border-slate-800 text-slate-100 shadow-md">
-      {/* Top Main Navigation Bar */}
+      
+      {/* Top Emergency Active Context Banner */}
+      {currentEmergency ? (
+        <div className="bg-amber-950/70 border-b border-amber-800/60 px-4 py-1 flex items-center justify-between text-[11px] text-amber-200">
+          <div className="flex items-center space-x-2 truncate max-w-2xl">
+            <ShieldAlert className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 animate-pulse" />
+            <span className="font-bold text-amber-300">EMERGENCIA ACTIVA:</span>
+            <span className="truncate">{currentEmergency.name} ({currentEmergency.municipality}, {currentEmergency.department})</span>
+          </div>
+          {onOpenEmergencyModal && (
+            <button
+              onClick={onOpenEmergencyModal}
+              className="text-[10px] text-amber-400 hover:text-amber-200 underline font-bold"
+            >
+              Cambiar Evento
+            </button>
+          )}
+        </div>
+      ) : (
+        onOpenEmergencyModal && (
+          <div className="bg-slate-950/80 border-b border-slate-800 px-4 py-1 flex items-center justify-between text-[11px] text-slate-400">
+            <span>No hay evento sísmico o contingencia activa configurada.</span>
+            <button
+              onClick={onOpenEmergencyModal}
+              className="text-cyan-400 hover:text-cyan-300 font-bold underline text-[10px]"
+            >
+              + Configurar Emergencia
+            </button>
+          </div>
+        )
+      )}
+
+      {/* Main Navigation Bar */}
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           
@@ -101,18 +146,18 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
             <div>
               <div className="flex items-center space-x-1.5">
-                <span className="font-black tracking-wider text-lg sm:text-xl text-white font-mono">SIPRE</span>
-                <span className="bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 text-[9px] sm:text-[10px] uppercase font-bold px-1.5 py-0.5 rounded">
-                  Operaciones Técnicas
+                <span className="font-mono font-black text-base sm:text-lg tracking-wider text-white">SIPRE</span>
+                <span className="text-[10px] uppercase font-bold tracking-widest px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800/80">
+                  OPERACIONES
                 </span>
               </div>
-              <p className="text-[10px] text-slate-400 font-medium hidden md:block">
-                Evaluación Técnica y Respuesta de Emergencia
+              <p className="text-[10px] text-slate-400 font-medium hidden sm:block">
+                Centro de Operaciones Técnicas y Patología Estructural
               </p>
             </div>
           </div>
 
-          {/* Desktop Navigation Links */}
+          {/* Center Navigation Tabs (Desktop) */}
           <nav className="hidden xl:flex items-center space-x-1">
             {navItems.map((item) => {
               const Icon = item.icon;
@@ -120,137 +165,134 @@ export const Header: React.FC<HeaderProps> = ({
               return (
                 <button
                   key={item.id}
-                  id={`nav-btn-${item.id}`}
+                  id={`nav-tab-${item.id}`}
                   onClick={() => handleNavClick(item.id as MainNavView)}
-                  className={`px-2.5 py-1.5 rounded-md text-[11px] font-bold tracking-wide flex items-center space-x-1.5 transition-colors ${
+                  className={`flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
                     isActive
-                      ? 'bg-cyan-600 text-white shadow-sm'
-                      : 'text-slate-300 hover:text-white hover:bg-slate-800'
+                      ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/40 shadow-sm'
+                      : 'text-slate-300 hover:text-white hover:bg-slate-800/70 border border-transparent'
                   }`}
                 >
-                  <Icon className="w-3.5 h-3.5" />
+                  <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-cyan-400' : 'text-slate-400'}`} />
                   <span>{item.label}</span>
                 </button>
               );
             })}
           </nav>
 
-          {/* Right Tools & Actions */}
+          {/* Right Action Tools */}
           <div className="flex items-center space-x-2">
             
-            {/* Field Mode Direct Button */}
+            {/* Quick Field Mode Button */}
             <button
-              id="btn-nav-field-mode"
+              id="header-btn-field-mode"
               onClick={() => handleNavClick('field-mode')}
-              title="Modo Campo optimizado para Android y terreno"
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1.5 border transition-all ${
+              className={`flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm ${
                 activeView === 'field-mode'
-                  ? 'bg-emerald-600 text-white border-emerald-400 shadow-md shadow-emerald-600/30'
-                  : 'bg-emerald-950/70 hover:bg-emerald-900 text-emerald-300 border-emerald-700/80'
+                  ? 'bg-emerald-500 text-slate-950 font-black'
+                  : 'bg-emerald-600 hover:bg-emerald-500 text-white'
               }`}
+              title="Iniciar o continuar Modo Campo"
             >
               <Smartphone className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">MODO CAMPO</span>
+              <span className="hidden md:inline">MODO CAMPO</span>
             </button>
 
-            {/* Offline / Online Sync Indicator */}
-            <div className="flex items-center">
-              {isOnline ? (
-                <div className="flex items-center space-x-1 bg-slate-800/80 border border-slate-700/80 rounded-lg px-2 py-1 text-xs">
-                  <Wifi className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-                  <span className="text-slate-300 text-[10px] font-medium hidden lg:inline">En Línea</span>
-                  {pendingSyncCount > 0 && (
-                    <span className="ml-1 bg-amber-500 text-slate-950 font-bold text-[9px] px-1 py-0.2 rounded-full">
-                      {pendingSyncCount}
-                    </span>
-                  )}
-                </div>
-              ) : (
-                <div className="flex items-center space-x-1 bg-amber-950/60 border border-amber-600/50 rounded-lg px-2 py-1 text-xs text-amber-300">
-                  <WifiOff className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="font-semibold text-[10px]">Offline</span>
-                </div>
-              )}
-
-              {pendingSyncCount > 0 && (
-                <button
-                  id="btn-sync-data"
-                  onClick={onSyncClick}
-                  disabled={isSyncing}
-                  title="Sincronizar datos locales con el servidor"
-                  className="ml-1 bg-amber-500 hover:bg-amber-400 text-slate-950 px-2 py-1 rounded-lg text-[10px] font-bold flex items-center space-x-1 shadow-md transition-all active:scale-95 disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
-                  <span className="hidden md:inline">SYNC</span>
-                </button>
-              )}
-            </div>
-
-            {/* Technical References Modal */}
+            {/* Quick Action Button: New Case */}
             <button
-              id="btn-technical-references"
+              id="header-btn-new-case"
+              onClick={onOpenNewCaseModal}
+              className="hidden lg:flex items-center space-x-1 bg-cyan-600 hover:bg-cyan-500 text-white px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm"
+              title="Crear Nuevo Expediente"
+            >
+              <PlusCircle className="w-3.5 h-3.5" />
+              <span>Nuevo Expediente</span>
+            </button>
+
+            {/* Technical Norms & References */}
+            <button
+              id="header-btn-references"
               onClick={() => handleNavClick('references')}
-              title="Normas Técnicas de Referencia (NSR-10, AIS 410, FEMA)"
-              className="p-1.5 text-slate-400 hover:text-cyan-400 hover:bg-slate-800 rounded-lg transition-colors border border-transparent hover:border-slate-700 hidden sm:flex"
+              className="hidden sm:flex items-center space-x-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white px-2 py-1.5 rounded-lg text-xs font-medium border border-slate-700 transition-colors"
+              title="Referencias Técnicas (NSR-10, AIS 410, FEMA)"
             >
-              <BookOpen className="w-4 h-4" />
+              <BookOpen className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="hidden md:inline">Normas</span>
             </button>
 
-            {/* Supabase Config Button */}
+            {/* Supabase Cloud Connection Status */}
             <button
-              id="btn-supabase-modal"
+              id="header-btn-supabase-status"
               onClick={onOpenSupabaseModal}
-              title="Configuración de Base de Datos y Supabase"
-              className="p-1.5 text-slate-400 hover:text-cyan-400 hover:bg-slate-800 rounded-lg transition-colors border border-transparent hover:border-slate-700"
+              className="flex items-center space-x-1 bg-slate-800 hover:bg-slate-700 px-2 py-1.5 rounded-lg text-xs font-medium border border-slate-700 transition-colors text-slate-300 hover:text-white"
+              title="Estado de conexión Supabase"
             >
-              <Database className="w-4 h-4" />
+              <Database className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden lg:inline text-[11px]">Nube</span>
             </button>
 
-            {/* Role Switcher */}
-            <div className="relative hidden sm:flex items-center bg-slate-800 border border-slate-700 rounded-lg px-2 py-1">
-              <UserCheck className="w-3.5 h-3.5 text-cyan-400 mr-1" />
-              <select
-                id="role-selector"
-                value={currentRole}
-                onChange={(e) => onRoleChange(e.target.value as UserRole)}
-                className="bg-transparent text-[11px] font-medium text-slate-200 focus:outline-none cursor-pointer pr-1"
-                aria-label="Seleccionar Rol de Usuario"
-              >
-                <option value="Inspector" className="bg-slate-900 text-white">Inspector</option>
-                <option value="StructuralSpecialist" className="bg-slate-900 text-white">Especialista</option>
-                <option value="Coordinator" className="bg-slate-900 text-white">Coordinador</option>
-                <option value="Administrator" className="bg-slate-900 text-white">Admin</option>
-                <option value="Viewer" className="bg-slate-900 text-white">Visualizador</option>
-              </select>
-            </div>
-
-            {/* Quick Actions Dropdown / Direct Buttons */}
-            <div className="hidden lg:flex items-center space-x-1.5">
-              <button
-                id="btn-header-new-case"
-                onClick={onOpenNewCaseModal}
-                className="bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1 shadow transition-all active:scale-95 whitespace-nowrap"
-              >
-                <PlusCircle className="w-3.5 h-3.5 text-cyan-400" />
-                <span>+ EXPEDIENTE</span>
-              </button>
-
-              <button
-                id="btn-header-schedule-visit"
-                onClick={onOpenScheduleVisitModal}
-                className="bg-cyan-600 hover:bg-cyan-500 text-white px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1 shadow-lg shadow-cyan-600/20 border border-cyan-400/40 transition-all active:scale-95 whitespace-nowrap"
-              >
-                <Calendar className="w-3.5 h-3.5" />
-                <span>+ VISITA</span>
-              </button>
-            </div>
-
-            {/* Mobile Hamburger Menu Toggle */}
+            {/* Sync Queue Badge & Trigger */}
             <button
-              id="btn-mobile-menu"
+              id="header-btn-sync"
+              onClick={onSyncClick}
+              disabled={isSyncing}
+              className={`flex items-center space-x-1 px-2 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                pendingSyncCount > 0
+                  ? 'bg-amber-950/80 border-amber-600/60 text-amber-300 hover:bg-amber-900'
+                  : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+              }`}
+              title={pendingSyncCount > 0 ? `${pendingSyncCount} pendientes por sincronizar` : 'Todo sincronizado'}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-cyan-400' : 'text-slate-400'}`} />
+              {pendingSyncCount > 0 && (
+                <span className="bg-amber-500 text-slate-950 font-bold px-1.5 py-0.2 rounded-full text-[10px]">
+                  {pendingSyncCount}
+                </span>
+              )}
+            </button>
+
+            {/* Online / Offline Status Badge */}
+            <div 
+              id="header-online-status"
+              className={`flex items-center space-x-1 px-2 py-1 rounded-md text-[11px] font-bold border ${
+                isOnline 
+                  ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800/80' 
+                  : 'bg-red-950/80 text-red-300 border-red-800/80'
+              }`}
+              title={isOnline ? 'Conexión activa' : 'Sin conexión - Modo Local/Offline activo'}
+            >
+              {isOnline ? <Wifi className="w-3 h-3 text-emerald-400" /> : <WifiOff className="w-3 h-3 text-red-400" />}
+              <span className="hidden md:inline">{isOnline ? 'Online' : 'Offline'}</span>
+            </div>
+
+            {/* User Profile & Sign Out button */}
+            {user && (
+              <div className="relative flex items-center space-x-1.5 pl-1.5 border-l border-slate-800">
+                <div className="hidden sm:flex flex-col text-right">
+                  <span className="text-xs font-bold text-white leading-tight truncate max-w-[140px]">
+                    {profile?.full_name || user.email?.split('@')[0]}
+                  </span>
+                  <span className="text-[10px] text-cyan-400 font-semibold uppercase tracking-wider">
+                    {getDisplayRole(profile?.role)}
+                  </span>
+                </div>
+
+                <button
+                  id="btn-sign-out"
+                  onClick={() => signOut()}
+                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-red-950 hover:text-red-300 text-slate-300 border border-slate-700 transition-colors"
+                  title="Cerrar Sesión"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {/* Mobile Hamburger Button */}
+            <button
+              id="header-mobile-menu-btn"
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="xl:hidden p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
-              aria-label="Abrir Menú de Navegación"
+              className="xl:hidden p-2 rounded-lg bg-slate-800 text-slate-300 hover:text-white border border-slate-700 focus:outline-none"
             >
               {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
             </button>
@@ -259,40 +301,61 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
+      {/* Secondary Desktop Navigation Row for Medium/Large screens */}
+      <div className="hidden lg:flex xl:hidden border-t border-slate-800 bg-slate-900/90 px-4 py-1.5 overflow-x-auto space-x-1">
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          const isActive = activeView === item.id;
+          return (
+            <button
+              key={item.id}
+              onClick={() => handleNavClick(item.id as MainNavView)}
+              className={`flex items-center space-x-1 px-2.5 py-1 rounded-md text-xs font-bold whitespace-nowrap transition-colors ${
+                isActive
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                  : 'text-slate-300 hover:bg-slate-800'
+              }`}
+            >
+              <Icon className="w-3 h-3" />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
       {/* Mobile Drawer Menu */}
       {isMobileMenuOpen && (
-        <div id="mobile-nav-drawer" className="xl:hidden bg-slate-900 border-b border-slate-800 px-4 py-3 space-y-2">
-          <div className="grid grid-cols-2 gap-2">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = activeView === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => handleNavClick(item.id as MainNavView)}
-                  className={`p-2.5 rounded-lg text-xs font-bold flex items-center space-x-2 transition-colors ${
-                    isActive
-                      ? 'bg-cyan-600 text-white'
-                      : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800 hover:text-white'
-                  }`}
-                >
-                  <Icon className="w-4 h-4" />
-                  <span>{item.label}</span>
-                </button>
-              );
-            })}
-          </div>
+        <div id="header-mobile-drawer" className="xl:hidden bg-slate-900 border-b border-slate-800 px-4 pt-2 pb-4 space-y-2">
+          
+          {user && (
+            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between text-xs mb-2">
+              <div className="flex items-center space-x-2">
+                <User className="w-4 h-4 text-cyan-400" />
+                <div>
+                  <div className="font-bold text-white">{profile?.full_name || user.email}</div>
+                  <div className="text-[10px] text-cyan-400 font-semibold uppercase">{getDisplayRole(profile?.role)}</div>
+                </div>
+              </div>
+              <button
+                onClick={() => signOut()}
+                className="px-2.5 py-1 bg-red-950 border border-red-800 text-red-300 font-bold rounded-lg text-xs flex items-center space-x-1"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Salir</span>
+              </button>
+            </div>
+          )}
 
-          <div className="pt-2 border-t border-slate-800 flex items-center justify-between">
+          <div className="grid grid-cols-2 gap-2 pt-1">
             <button
               onClick={() => {
                 onOpenNewCaseModal();
                 setIsMobileMenuOpen(false);
               }}
-              className="bg-slate-800 text-cyan-300 border border-slate-700 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1"
+              className="flex items-center justify-center space-x-1 bg-cyan-600 hover:bg-cyan-500 text-white p-2 rounded-lg text-xs font-bold"
             >
-              <PlusCircle className="w-3.5 h-3.5" />
-              <span>+ Nuevo Expediente</span>
+              <PlusCircle className="w-4 h-4" />
+              <span>Nuevo Expediente</span>
             </button>
 
             <button
@@ -300,24 +363,54 @@ export const Header: React.FC<HeaderProps> = ({
                 onOpenScheduleVisitModal();
                 setIsMobileMenuOpen(false);
               }}
-              className="bg-cyan-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1"
+              className="flex items-center justify-center space-x-1 bg-slate-800 hover:bg-slate-700 text-slate-200 p-2 rounded-lg text-xs font-bold border border-slate-700"
             >
-              <Calendar className="w-3.5 h-3.5" />
-              <span>+ Programar Visita</span>
+              <Calendar className="w-4 h-4 text-cyan-400" />
+              <span>Agendar Visita</span>
             </button>
           </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 pt-2">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = activeView === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => handleNavClick(item.id as MainNavView)}
+                  className={`flex items-center space-x-2 px-3 py-2.5 rounded-lg text-xs font-bold transition-colors text-left ${
+                    isActive
+                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                      : 'text-slate-300 hover:bg-slate-800 border border-transparent'
+                  }`}
+                >
+                  <Icon className="w-4 h-4 text-cyan-400" />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+            <button
+              onClick={() => handleNavClick('references')}
+              className="flex items-center space-x-1 text-slate-300 hover:text-cyan-400"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>Referencias NSR-10 / AIS 410</span>
+            </button>
+
+            <button
+              onClick={onOpenSupabaseModal}
+              className="flex items-center space-x-1 text-slate-300 hover:text-emerald-400"
+            >
+              <Database className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Supabase</span>
+            </button>
+          </div>
+
         </div>
       )}
-
-      {/* Safety Notice & Engineering Standards Bar */}
-      <div className="bg-slate-950/90 border-t border-slate-800/80 px-4 py-1 text-[11px] text-slate-400 flex items-center justify-between overflow-x-auto">
-        <div className="flex items-center space-x-2 whitespace-nowrap">
-          <ShieldAlert className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" />
-          <span className="font-semibold text-slate-300">Aviso de Seguridad:</span>
-          <span>La IA es una herramienta de asistencia técnica preliminar. Toda decisión estructural requiere verificación y concepto de un profesional matriculado.</span>
-        </div>
-        <span className="font-mono text-[10px] text-slate-400 ml-4 hidden md:inline">NSR-10 / AIS 410 / FEMA P-2055 Compliant</span>
-      </div>
     </header>
   );
 };

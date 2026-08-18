@@ -10,19 +10,26 @@ import {
   AlertCircle, 
   CheckCircle2, 
   Info,
-  ShieldAlert
+  ShieldAlert,
+  Loader2
 } from 'lucide-react';
 import { PropertyType, CasePriority } from '../types';
+import { saveVisit, generateNextVisitCode } from '../lib/storage';
+import { createVisitInDb } from '../lib/supabaseService';
+import { useAuth } from '../context/AuthContext';
 
 interface ScheduleVisitModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onVisitCreated?: () => void;
 }
 
 export const ScheduleVisitModal: React.FC<ScheduleVisitModalProps> = ({
   isOpen,
   onClose,
+  onVisitCreated,
 }) => {
+  const { user, profile, activeProfiles } = useAuth();
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
     startTime: '09:00',
@@ -32,7 +39,8 @@ export const ScheduleVisitModal: React.FC<ScheduleVisitModalProps> = ({
     municipality: '',
     neighborhood: '',
     propertyType: 'Edificio' as PropertyType,
-    responsibleProfessional: '',
+    responsibleProfessionalId: user?.id || '',
+    responsibleProfessional: profile?.full_name || '',
     assignedTeam: '',
     visitReason: '',
     visitObjective: '',
@@ -40,12 +48,30 @@ export const ScheduleVisitModal: React.FC<ScheduleVisitModalProps> = ({
     priority: 'Normal' as CasePriority,
   });
 
-  const [devMessage, setDevMessage] = useState<string | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
   const [validationError, setValidationError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleProfessionalSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const selectedId = e.target.value;
+    const found = activeProfiles.find((p) => p.id === selectedId);
+    if (found) {
+      setFormData({
+        ...formData,
+        responsibleProfessionalId: found.id,
+        responsibleProfessional: found.full_name,
+      });
+    } else {
+      setFormData({
+        ...formData,
+        responsibleProfessionalId: '',
+        responsibleProfessional: selectedId,
+      });
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setValidationError(null);
 
@@ -67,64 +93,128 @@ export const ScheduleVisitModal: React.FC<ScheduleVisitModalProps> = ({
       return;
     }
 
-    // Form validated successfully - display non-persistent development notice as instructed
-    setDevMessage('Persistencia pendiente de habilitación.');
-    setTimeout(() => {
-      setDevMessage(null);
+    setLoading(true);
+
+    try {
+      // 1. Save to Supabase
+      const dbVisit = await createVisitInDb({
+        date: formData.date,
+        startTime: formData.startTime,
+        estimatedEndTime: formData.estimatedEndTime,
+        clientName: formData.clientName.trim(),
+        address: formData.address.trim(),
+        municipality: formData.municipality.trim(),
+        neighborhood: formData.neighborhood.trim(),
+        propertyType: formData.propertyType,
+        responsibleProfessionalId: formData.responsibleProfessionalId || user?.id || 'prof-1',
+        responsibleProfessionalName: formData.responsibleProfessional.trim(),
+        assignedTeam: formData.assignedTeam.trim(),
+        visitReason: formData.visitReason.trim(),
+        visitObjective: formData.visitObjective.trim(),
+        preparationObservations: formData.preparationObservations.trim(),
+        priority: formData.priority,
+        createdBy: user?.id,
+      });
+
+      // 2. Also save to local storage for instant access & offline durability
+      const visitCode = dbVisit?.id || generateNextVisitCode();
+      saveVisit({
+        id: visitCode,
+        date: formData.date,
+        startTime: formData.startTime,
+        estimatedEndTime: formData.estimatedEndTime,
+        clientName: formData.clientName.trim(),
+        address: formData.address.trim(),
+        municipality: formData.municipality.trim(),
+        neighborhood: formData.neighborhood.trim(),
+        propertyType: formData.propertyType,
+        responsibleProfessional: formData.responsibleProfessional.trim(),
+        assignedTeam: formData.assignedTeam.trim(),
+        visitReason: formData.visitReason.trim(),
+        visitObjective: formData.visitObjective.trim(),
+        preparationObservations: formData.preparationObservations.trim(),
+        priority: formData.priority,
+        status: 'PROGRAMADA',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+
+      if (onVisitCreated) {
+        onVisitCreated();
+      }
+
       onClose();
-    }, 2800);
+    } catch (err: any) {
+      console.warn('Schedule visit error:', err);
+      // Fallback local save
+      const nextCode = generateNextVisitCode();
+      saveVisit({
+        id: nextCode,
+        date: formData.date,
+        startTime: formData.startTime,
+        estimatedEndTime: formData.estimatedEndTime,
+        clientName: formData.clientName.trim(),
+        address: formData.address.trim(),
+        municipality: formData.municipality.trim(),
+        neighborhood: formData.neighborhood.trim(),
+        propertyType: formData.propertyType,
+        responsibleProfessional: formData.responsibleProfessional.trim(),
+        assignedTeam: formData.assignedTeam.trim(),
+        visitReason: formData.visitReason.trim(),
+        visitObjective: formData.visitObjective.trim(),
+        preparationObservations: formData.preparationObservations.trim(),
+        priority: formData.priority,
+        status: 'PROGRAMADA',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      if (onVisitCreated) onVisitCreated();
+      onClose();
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
+    <div id="modal-schedule-visit" className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-5 my-8">
         
         {/* Header */}
-        <div className="px-6 py-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
-          <div className="flex items-center space-x-2.5">
-            <div className="w-9 h-9 rounded-xl bg-cyan-950 border border-cyan-800 flex items-center justify-center text-cyan-400">
+        <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+          <div className="flex items-center space-x-3">
+            <div className="w-10 h-10 rounded-xl bg-cyan-950 border border-cyan-800 flex items-center justify-center text-cyan-400">
               <Calendar className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">
-                Programar Visita Técnica
+              <h2 className="text-lg font-black text-white flex items-center space-x-2">
+                <span>Programar Nueva Visita Técnica</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800">
+                  AGENDA
+                </span>
               </h2>
               <p className="text-xs text-slate-400">
-                Agendamiento de inspección en campo y asignación de equipo técnico
+                Asigna el profesional responsable, fecha, franja horaria y objetivo técnico de la inspección.
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Notice Banner */}
-        <div className="bg-cyan-950/40 border-b border-cyan-900/50 px-6 py-2 text-xs text-cyan-300 flex items-center space-x-2">
-          <Info className="w-4 h-4 flex-shrink-0 text-cyan-400" />
-          <span>Fase de validación de interfaz técnica. Las escrituras en base de datos se activarán en el siguiente paso.</span>
-        </div>
+        {/* Validation Error */}
+        {validationError && (
+          <div className="p-3 bg-red-950/80 border border-red-800 rounded-xl text-xs text-red-200 flex items-center space-x-2">
+            <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
+            <span>{validationError}</span>
+          </div>
+        )}
 
-        {/* Form Body */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-5 text-xs text-slate-200">
+        <form onSubmit={handleSubmit} className="space-y-4 text-xs">
           
-          {validationError && (
-            <div className="p-3 rounded-xl bg-rose-950/60 border border-rose-800 text-rose-300 flex items-center space-x-2">
-              <AlertCircle className="w-4 h-4 flex-shrink-0" />
-              <span>{validationError}</span>
-            </div>
-          )}
-
-          {devMessage && (
-            <div className="p-4 rounded-xl bg-amber-950/80 border border-amber-600 text-amber-200 font-bold text-center flex items-center justify-center space-x-2 animate-pulse">
-              <CheckCircle2 className="w-5 h-5 text-amber-400" />
-              <span>{devMessage}</span>
-            </div>
-          )}
-
           {/* Date and Time Group */}
           <div className="bg-slate-950/60 border border-slate-800 rounded-xl p-4 space-y-3">
             <h3 className="font-bold text-white uppercase tracking-wider text-[11px] flex items-center space-x-1.5">
@@ -227,6 +317,7 @@ export const ScheduleVisitModal: React.FC<ScheduleVisitModalProps> = ({
                 >
                   <option value="Casa">Casa</option>
                   <option value="Edificio">Edificio</option>
+                  <option value="Apartamento">Apartamento</option>
                   <option value="Local comercial">Local comercial</option>
                   <option value="Bodega">Bodega</option>
                   <option value="Institucional">Institucional</option>
@@ -259,14 +350,35 @@ export const ScheduleVisitModal: React.FC<ScheduleVisitModalProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-[11px] font-semibold text-slate-400 mb-1">Profesional Responsable *</label>
-                <input
-                  type="text"
-                  placeholder="Ej: Ing. Evaluador Estructural"
-                  value={formData.responsibleProfessional}
-                  onChange={(e) => setFormData({ ...formData, responsibleProfessional: e.target.value })}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
-                  required
-                />
+                {(() => {
+                  const professionalProfiles = activeProfiles.filter(
+                    (p) => p.active !== false && (p.role === 'inspector' || p.role === 'Inspector' || p.role === 'structural_specialist')
+                  );
+                  return professionalProfiles.length > 0 ? (
+                    <select
+                      value={formData.responsibleProfessionalId}
+                      onChange={handleProfessionalSelect}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500 cursor-pointer font-semibold"
+                      required
+                    >
+                      <option value="">Seleccione profesional responsable...</option>
+                      {professionalProfiles.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.full_name} (Profesional) {p.professional_license ? `[${p.professional_license}]` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      placeholder="Ej: Ing. Evaluador Estructural"
+                      value={formData.responsibleProfessional}
+                      onChange={(e) => setFormData({ ...formData, responsibleProfessional: e.target.value })}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+                      required
+                    />
+                  );
+                })()}
               </div>
               <div>
                 <label className="block text-[11px] font-semibold text-slate-400 mb-1">Equipo / Acompañantes Asignados</label>
@@ -321,21 +433,29 @@ export const ScheduleVisitModal: React.FC<ScheduleVisitModalProps> = ({
             </div>
           </div>
 
-          {/* Footer Actions */}
-          <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+          {/* Action Buttons */}
+          <div className="flex items-center justify-end space-x-3 pt-3 border-t border-slate-800">
             <button
               type="button"
               onClick={onClose}
-              className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-4 py-2 rounded-xl text-xs font-bold transition-colors"
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl transition-colors"
             >
               Cancelar
             </button>
             <button
+              id="btn-submit-schedule-visit"
               type="submit"
-              className="bg-cyan-600 hover:bg-cyan-500 text-white px-6 py-2 rounded-xl text-xs font-bold transition-all shadow-lg shadow-cyan-600/25 active:scale-95 flex items-center space-x-1.5"
+              disabled={loading}
+              className="px-5 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-800 text-white font-bold rounded-xl shadow-lg shadow-cyan-600/30 transition-all flex items-center space-x-2"
             >
-              <Calendar className="w-4 h-4" />
-              <span>PROGRAMAR VISITA</span>
+              {loading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Programando...</span>
+                </>
+              ) : (
+                <span>PROGRAMAR VISITA</span>
+              )}
             </button>
           </div>
 
