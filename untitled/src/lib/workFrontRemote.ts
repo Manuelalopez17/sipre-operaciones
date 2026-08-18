@@ -186,8 +186,21 @@ export async function updateWorkFrontStatusInDb(id: string, status: WorkFrontSta
 export async function deleteWorkFrontInDb(id: string): Promise<void> {
   const client = getSupabaseClient();
   if (!client) throw new Error('Supabase no está configurado.');
-  const { error } = await client.from('work_fronts').delete().eq('id', id);
-  if (error) throw new Error(error.message);
+
+  const { data: evidenceRows } = await client.from('evidence_files').select('storage_path').eq('work_front_id', id);
+  const paths = (evidenceRows || []).map((row: any) => row.storage_path).filter(Boolean);
+  if (paths.length) await client.storage.from('sipre-files').remove(paths);
+
+  const { error: rpcError } = await client.rpc('sipre_delete_work_front', { p_work_front_id: id });
+  if (rpcError) {
+    const message = String(rpcError.message || '').toLowerCase();
+    const functionMissing = message.includes('sipre_delete_work_front') && (message.includes('not found') || message.includes('schema cache') || message.includes('function'));
+    if (!functionMissing) throw new Error(rpcError.message);
+
+    const { error } = await client.from('work_fronts').delete().eq('id', id);
+    if (error) throw new Error(error.message);
+  }
+
   await getWorkFrontsFromDb();
 }
 
