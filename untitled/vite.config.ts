@@ -55,6 +55,56 @@ function sipreRuntimeFixes(): Plugin {
         );
       }
 
+      if (id.endsWith('/src/components/AgendaView.tsx') || id.endsWith('\\src\\components\\AgendaView.tsx')) {
+        // All actual professional profile aliases remain assignable.
+        next = next.replace(
+          "['inspector', 'structural_specialist'].includes(String(p.role || '').toLowerCase())",
+          "['inspector', 'structural_specialist', 'profesional'].includes(String(p.role || '').toLowerCase())"
+        );
+
+        // If a test visit already generated a work front, remove that dependent
+        // front first so the planner can delete the erroneous visit cleanly.
+        if (!next.includes("from '../lib/workFrontRemote'")) {
+          next = next.replace(
+            "import { isCoordinator, isManagement, isProfessional } from '../lib/roles';",
+            "import { isCoordinator, isManagement, isProfessional } from '../lib/roles';\nimport { deleteWorkFrontInDb } from '../lib/workFrontRemote';"
+          );
+        }
+        next = next.replace(
+          '      const visitId = selectedVisit.id;\n\n      const { data: evidenceRows }',
+          `      const visitId = selectedVisit.id;\n\n      const { data: relatedFronts } = await client\n        .from('work_fronts')\n        .select('id')\n        .eq('originating_visit_id', visitId);\n      for (const front of relatedFronts || []) {\n        await deleteWorkFrontInDb(front.id);\n      }\n\n      const { data: evidenceRows }`
+        );
+      }
+
+      if (id.endsWith('/src/components/ScheduleVisitModal.tsx') || id.endsWith('\\src\\components\\ScheduleVisitModal.tsx')) {
+        next = next.replace(
+          "(p.role === 'inspector' || p.role === 'structural_specialist' || p.role === 'Inspector')",
+          "['inspector','structural_specialist','profesional'].includes(String(p.role || '').toLowerCase())"
+        );
+      }
+
+      if (id.endsWith('/src/lib/workFrontRemote.ts') || id.endsWith('\\src\\lib\\workFrontRemote.ts')) {
+        // Robust deletion for test/demo fronts: remove dependent operational
+        // records and stored evidence before deleting the work front itself.
+        next = next.replace(
+          `export async function deleteWorkFrontInDb(id: string): Promise<void> {\n  const client = getSupabaseClient();\n  if (!client) throw new Error('Supabase no está configurado.');\n  const { error } = await client.from('work_fronts').delete().eq('id', id);\n  if (error) throw new Error(error.message);\n  await getWorkFrontsFromDb();\n}`,
+          `export async function deleteWorkFrontInDb(id: string): Promise<void> {\n  const client = getSupabaseClient();\n  if (!client) throw new Error('Supabase no está configurado.');\n\n  const { data: evidenceRows } = await client\n    .from('evidence_files')\n    .select('storage_path')\n    .eq('work_front_id', id);\n  const paths = (evidenceRows || []).map((row: any) => row.storage_path).filter(Boolean);\n  if (paths.length) {\n    await client.storage.from('sipre-files').remove(paths);\n  }\n\n  const dependentTables = [\n    'material_deliveries',\n    'material_requests',\n    'work_logs',\n    'technical_handover_approvals',\n    'client_handovers',\n    'billing_records',\n    'payments',\n    'collection_actions',\n    'evidence_files',\n  ];\n\n  for (const table of dependentTables) {\n    try {\n      await client.from(table).delete().eq('work_front_id', id);\n    } catch {\n      // Optional tables may not exist in every deployment.\n    }\n  }\n\n  const { error } = await client.from('work_fronts').delete().eq('id', id);\n  if (error) throw new Error(error.message);\n  await getWorkFrontsFromDb();\n}`
+        );
+      }
+
+      if (id.endsWith('/src/components/WorkFrontsRemoteView.tsx') || id.endsWith('\\src\\components\\WorkFrontsRemoteView.tsx')) {
+        // Coordination/management should see all fronts by default so test/demo
+        // records are visible and removable. Professionals keep "mine" as default.
+        next = next.replace(
+          "const [onlyMine, setOnlyMine] = useState(true);",
+          "const [onlyMine, setOnlyMine] = useState(() => String(profile?.role || '').toLowerCase().includes('inspector') || String(profile?.role || '').toLowerCase().includes('structural_specialist'));"
+        );
+        next = next.replace(
+          'title="Eliminar prueba"',
+          'title="Eliminar prueba o dato erróneo"'
+        );
+      }
+
       if (id.endsWith('/src/components/FieldModeView.tsx') || id.endsWith('\\src\\components\\FieldModeView.tsx')) {
         // Keep camera/video/audio/document inputs mounted for every field step.
         const mediaInputs = /\s*<input ref=\{photoCaptureRef\}[\s\S]*?<input ref=\{documentFileRef\}[\s\S]*?\/>/m;
