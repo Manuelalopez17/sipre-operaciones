@@ -59,11 +59,6 @@ const AppInner: React.FC = () => {
     setPendingSyncCount(getPendingSyncCount());
   };
 
-  /**
-   * Hydrates the browser cache from the shared Supabase database.
-   * Several legacy screens still read the fast local cache, so we keep that
-   * cache mirrored from the cloud to preserve the complete interface on every device.
-   */
   const syncRemoteOperationalToLocal = async () => {
     if (!user?.id) return;
     try {
@@ -144,8 +139,6 @@ const AppInner: React.FC = () => {
     const role = getRoleCategory(profile?.role);
     if (view === 'dashboard' || view === 'references') return true;
 
-    // Professional: full technical context in read mode, with write access only
-    // to the inspection/report that belongs to an assigned visit.
     if (role === 'PROFESIONAL') {
       return [
         'agenda','visits','cases','work-fronts','materials','deliveries','team',
@@ -153,8 +146,6 @@ const AppInner: React.FC = () => {
       ].includes(view);
     }
 
-    // Coordinator and Management can see the complete operation. Their write
-    // permissions are controlled inside each screen.
     if (role === 'COORDINADOR' || role === 'GERENCIA') {
       return [
         'agenda','visits','cases','work-fronts','materials','deliveries','billing',
@@ -162,14 +153,13 @@ const AppInner: React.FC = () => {
       ].includes(view);
     }
 
-    // Operative personnel need the context of the case/front plus logistics.
     return ['cases','work-fronts','materials','deliveries','team'].includes(view);
   };
 
   const handleNavigate = (view: MainNavView) => {
     if (view === 'references') return setIsReferencesModalOpen(true);
     if (!roleAllowsView(view)) return setActiveView('dashboard');
-    if (view === 'field-mode') return; // opens only from an assigned visit
+    if (view === 'field-mode') return;
     setActiveView(view);
   };
 
@@ -299,7 +289,11 @@ const AppInner: React.FC = () => {
           />
         )}
         {activeView === 'technical-review' && isProfessional(profile?.role) && (
-          <TechnicalReviewView onNavigateToClientApproval={() => setActiveView('client-approval')} />
+          <TechnicalReviewView
+            visit={selectedVisitForField}
+            onNavigateToClientApproval={() => setActiveView('client-approval')}
+            onBackToDashboard={() => setActiveView('dashboard')}
+          />
         )}
         {activeView === 'client-approval' && isProfessional(profile?.role) && (
           <ClientApprovalView onBackToDashboard={() => setActiveView('dashboard')} />
