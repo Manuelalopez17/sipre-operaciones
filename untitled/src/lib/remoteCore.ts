@@ -11,6 +11,14 @@ const uuid = (): string => {
   return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;
 };
 
+const normalizeTime = (value?: string | null): string => {
+  if (!value) return '';
+  const text = String(value).trim();
+  const match = text.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return '';
+  return `${match[1].padStart(2, '0')}:${match[2]}`;
+};
+
 async function activeEmergencyId(): Promise<string | null> {
   const client = getSupabaseClient();
   if (!client) return null;
@@ -144,8 +152,8 @@ export async function getVisitsFromDb(): Promise<VisitRecord[]> {
     caseId: v.case_id,
     caseCode: v.case_code || '',
     date: v.date || v.scheduled_start?.slice(0,10) || '',
-    startTime: v.start_time || (v.scheduled_start ? new Date(v.scheduled_start).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : ''),
-    estimatedEndTime: v.estimated_end_time || '',
+    startTime: normalizeTime(v.start_time) || (v.scheduled_start ? normalizeTime(new Date(v.scheduled_start).toTimeString()) : ''),
+    estimatedEndTime: normalizeTime(v.estimated_end_time) || (v.scheduled_end ? normalizeTime(new Date(v.scheduled_end).toTimeString()) : ''),
     clientName: v.client_name || '',
     address: v.address || v.location || '',
     municipality: v.municipality || '',
@@ -178,13 +186,19 @@ export async function createVisitInDb(input: {
   const client = getSupabaseClient();
   if (!client) throw new Error('Supabase no está configurado.');
   if (!input.caseId) throw new Error('La visita debe pertenecer a un expediente.');
+
+  const startTime = normalizeTime(input.startTime);
+  const estimatedEndTime = normalizeTime(input.estimatedEndTime);
+  if (!startTime || !estimatedEndTime) throw new Error('La hora de inicio o finalización no es válida.');
+  if (estimatedEndTime <= startTime) throw new Error('La hora de finalización debe ser posterior a la hora de inicio.');
+
   const year = new Date().getFullYear();
   const { count } = await client.from('visits').select('*', { count: 'exact', head: true });
   const visitCode = `VIS-${year}-${String((count || 0) + 1).padStart(6, '0')}`;
   const id = uuid();
   const now = new Date().toISOString();
-  const start = new Date(`${input.date}T${input.startTime}:00`).toISOString();
-  const end = new Date(`${input.date}T${input.estimatedEndTime}:00`).toISOString();
+  const start = new Date(`${input.date}T${startTime}:00`).toISOString();
+  const end = new Date(`${input.date}T${estimatedEndTime}:00`).toISOString();
   const { data, error } = await client.from('visits').insert({
     id,
     visit_code: visitCode,
@@ -194,8 +208,8 @@ export async function createVisitInDb(input: {
     scheduled_start: start,
     scheduled_end: end,
     date: input.date,
-    start_time: input.startTime,
-    estimated_end_time: input.estimatedEndTime,
+    start_time: startTime,
+    estimated_end_time: estimatedEndTime,
     location: input.address.trim(),
     client_name: input.clientName.trim(),
     address: input.address.trim(),
@@ -230,7 +244,7 @@ export async function createVisitInDb(input: {
 
   return (await getVisitsFromDb()).find(v => v.id === data.id) || ({
     id: data.id, caseId: data.case_id, caseCode: data.case_code || '', date: data.date,
-    startTime: data.start_time, estimatedEndTime: data.estimated_end_time,
+    startTime: normalizeTime(data.start_time), estimatedEndTime: normalizeTime(data.estimated_end_time),
     clientName: data.client_name, address: data.address, municipality: data.municipality,
     neighborhood: data.neighborhood || '', department: data.department || '', propertyType: data.property_type || 'Edificio',
     responsibleProfessional: data.responsible_professional, assignedTeam: data.assigned_team || '',
