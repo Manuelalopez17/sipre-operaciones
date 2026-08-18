@@ -4,7 +4,7 @@ import { VisitRecord } from '../types';
 import { getVisitsFromDb, subscribeVisitsRealtime } from '../lib/remoteCore';
 import { getSupabaseClient } from '../lib/supabaseClient';
 import { useAuth } from '../context/AuthContext';
-import { isCoordinator, isProfessional } from '../lib/roles';
+import { isPlanner, isProfessional } from '../lib/roles';
 
 interface AgendaViewProps {
   onOpenScheduleVisitModal: () => void;
@@ -36,9 +36,11 @@ export const AgendaView: React.FC<AgendaViewProps> = ({ onOpenScheduleVisitModal
     status: 'PROGRAMADA',
   });
 
-  const coordinatorRole = isCoordinator(profile?.role);
+  const plannerRole = isPlanner(profile?.role);
   const professionalRole = isProfessional(profile?.role);
-  const professionals = activeProfiles.filter(p => p.active !== false && ['inspector', 'structural_specialist'].includes(String(p.role || '').toLowerCase()));
+  const professionals = activeProfiles.filter(
+    p => p.active !== false && ['inspector', 'structural_specialist'].includes(String(p.role || '').toLowerCase())
+  );
 
   const isAssignedToMe = (v: VisitRecord) => {
     const assignedId = (v as any).responsibleProfessionalId || '';
@@ -100,7 +102,11 @@ export const AgendaView: React.FC<AgendaViewProps> = ({ onOpenScheduleVisitModal
   };
 
   const openVisit = (visit: VisitRecord) => {
-    const assignedId = (visit as any).responsibleProfessionalId || professionals.find(p => p.full_name === visit.responsibleProfessional)?.id || '';
+    const assignedId =
+      (visit as any).responsibleProfessionalId ||
+      professionals.find(p => p.full_name === visit.responsibleProfessional)?.id ||
+      '';
+
     setSelectedVisit(visit);
     setEditForm({
       date: visit.date || '',
@@ -114,7 +120,7 @@ export const AgendaView: React.FC<AgendaViewProps> = ({ onOpenScheduleVisitModal
   };
 
   const saveVisitChanges = async () => {
-    if (!selectedVisit || !coordinatorRole) return;
+    if (!selectedVisit || !plannerRole) return;
     if (!editForm.responsibleProfessionalId) return setEditError('Selecciona el profesional responsable.');
     if (!editForm.date || !editForm.startTime || !editForm.estimatedEndTime) return setEditError('Completa fecha y horario.');
     if (editForm.estimatedEndTime <= editForm.startTime) return setEditError('La hora de finalización debe ser posterior a la hora de inicio.');
@@ -132,6 +138,7 @@ export const AgendaView: React.FC<AgendaViewProps> = ({ onOpenScheduleVisitModal
       const scheduledEnd = new Date(`${editForm.date}T${editForm.estimatedEndTime}:00`).toISOString();
       const statusPatch: any = { status: editForm.status, updated_at: now };
 
+      // Coordinación/Gerencia pueden corregir una visita iniciada por error.
       if (editForm.status === 'PROGRAMADA') {
         statusPatch.confirmed_at = null;
         statusPatch.en_route_at = null;
@@ -190,18 +197,30 @@ export const AgendaView: React.FC<AgendaViewProps> = ({ onOpenScheduleVisitModal
   };
 
   const deleteVisit = async () => {
-    if (!selectedVisit || !coordinatorRole) return;
-    const ok = window.confirm(`¿Eliminar la visita de ${selectedVisit.clientName}? Esta acción elimina la programación y su asignación.`);
+    if (!selectedVisit || !plannerRole) return;
+    const ok = window.confirm(
+      `¿Eliminar la visita de ${selectedVisit.clientName}? Si solo fue una prueba o se inició por error, se eliminará también su asignación y el registro vacío de inicio de inspección.`
+    );
     if (!ok) return;
 
     const client = getSupabaseClient();
     if (!client) return setEditError('Supabase no está configurado.');
+
     setEditSaving(true);
     setEditError(null);
     try {
+      // La inspección iniciada por error crea un visit_assessment vacío. Se elimina
+      // junto con la programación; no se eliminan hallazgos/evidencias ni dictámenes.
       await client.from('visit_assignments').delete().eq('visit_id', selectedVisit.id);
+      await client.from('visit_assessments').delete().eq('visit_id', selectedVisit.id);
+
       const { error: visitError } = await client.from('visits').delete().eq('id', selectedVisit.id);
-      if (visitError) throw new Error(visitError.message);
+      if (visitError) {
+        throw new Error(
+          `${visitError.message}. Si la visita ya contiene hallazgos, evidencias o decisiones técnicas, no se elimina para proteger la trazabilidad; en ese caso cámbiala a CANCELADA.`
+        );
+      }
+
       await reload();
       setSelectedVisit(null);
     } catch (e: any) {
@@ -216,15 +235,18 @@ export const AgendaView: React.FC<AgendaViewProps> = ({ onOpenScheduleVisitModal
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="text-xs font-mono font-bold tracking-widest text-cyan-400 uppercase">Planificación Operativa</div>
-          <h1 className="text-2xl font-black text-white flex items-center gap-2 mt-1"><CalendarIcon className="w-6 h-6 text-cyan-400" />Agenda de Visitas</h1>
+          <h1 className="text-2xl font-black text-white flex items-center gap-2 mt-1">
+            <CalendarIcon className="w-6 h-6 text-cyan-400" />Agenda de Visitas
+          </h1>
           <p className="text-xs text-slate-400 mt-1">
-            {coordinatorRole
-              ? 'Como coordinador puedes programar, editar, reasignar, corregir estado y eliminar visitas.'
+            {plannerRole
+              ? 'Coordinación y Gerencia pueden programar, editar, reasignar, corregir estado y eliminar visitas.'
               : professionalRole
-              ? 'Aquí ves únicamente las visitas asignadas a tu usuario. La agenda la administra Coordinación.'
+              ? 'Aquí ves tus visitas asignadas. La agenda se administra desde Coordinación/Gerencia.'
               : 'Agenda general en modo lectura.'}
           </p>
         </div>
+
         <div className="flex flex-wrap gap-2 items-center">
           <div className="bg-slate-950 p-1 rounded-xl border border-slate-800 flex gap-1">
             {(['month','week','day'] as const).map(v => (
@@ -233,8 +255,10 @@ export const AgendaView: React.FC<AgendaViewProps> = ({ onOpenScheduleVisitModal
               </button>
             ))}
           </div>
-          {coordinatorRole && (
-            <button onClick={onOpenScheduleVisitModal} className="bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2"><PlusCircle className="w-4 h-4" />PROGRAMAR VISITA</button>
+          {plannerRole && (
+            <button onClick={onOpenScheduleVisitModal} className="bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2">
+              <PlusCircle className="w-4 h-4" />PROGRAMAR VISITA
+            </button>
           )}
         </div>
       </div>
@@ -270,8 +294,17 @@ export const AgendaView: React.FC<AgendaViewProps> = ({ onOpenScheduleVisitModal
                       <div className="text-xs font-mono font-bold text-slate-300">{item.dayNumber || ''}</div>
                       <div className="space-y-1 mt-1">
                         {dayVisits.map(v => (
-                          <button type="button" onClick={() => openVisit(v)} key={v.id} className="w-full text-left bg-cyan-950/80 hover:bg-cyan-900/80 border border-cyan-800/60 rounded p-1 text-[10px] text-cyan-200" title={`${coordinatorRole ? 'Editar' : 'Ver'} ${v.address} - ${v.responsibleProfessional}`}>
-                            <div className="font-bold truncate flex items-center gap-1">{normalizeTime(v.startTime)} · {v.clientName}{coordinatorRole ? <Pencil className="w-2.5 h-2.5 shrink-0" /> : <Eye className="w-2.5 h-2.5 shrink-0" />}</div>
+                          <button
+                            type="button"
+                            onClick={() => openVisit(v)}
+                            key={v.id}
+                            className="w-full text-left bg-cyan-950/80 hover:bg-cyan-900/80 border border-cyan-800/60 rounded p-1 text-[10px] text-cyan-200"
+                            title={`${plannerRole ? 'Editar' : 'Ver'} ${v.address} - ${v.responsibleProfessional}`}
+                          >
+                            <div className="font-bold truncate flex items-center gap-1">
+                              {normalizeTime(v.startTime)} · {v.clientName}
+                              {plannerRole ? <Pencil className="w-2.5 h-2.5 shrink-0" /> : <Eye className="w-2.5 h-2.5 shrink-0" />}
+                            </div>
                             <div className="truncate text-cyan-400">{v.responsibleProfessional}</div>
                             <div className="truncate text-slate-400">{v.status}</div>
                           </button>
@@ -283,13 +316,20 @@ export const AgendaView: React.FC<AgendaViewProps> = ({ onOpenScheduleVisitModal
               </div>
             </>
           ) : (
-            <div className="py-12 text-center"><Clock className="w-8 h-8 text-cyan-400 mx-auto mb-3" /><h3 className="font-bold text-white">Vista de {viewMode === 'week' ? 'Semana' : 'Día'}</h3><p className="text-xs text-slate-400 mt-1">Las visitas continúan disponibles en la vista mensual.</p></div>
+            <div className="py-12 text-center">
+              <Clock className="w-8 h-8 text-cyan-400 mx-auto mb-3" />
+              <h3 className="font-bold text-white">Vista de {viewMode === 'week' ? 'Semana' : 'Día'}</h3>
+              <p className="text-xs text-slate-400 mt-1">Las visitas continúan disponibles en la vista mensual.</p>
+            </div>
           )}
         </div>
       )}
 
       {!loading && displayedVisits.length === 0 && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center"><h3 className="font-bold text-white">No hay visitas programadas</h3><p className="text-xs text-slate-400 mt-1">No existen visitas visibles para este usuario.</p></div>
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center">
+          <h3 className="font-bold text-white">No hay visitas programadas</h3>
+          <p className="text-xs text-slate-400 mt-1">No existen visitas visibles para este usuario.</p>
+        </div>
       )}
 
       {selectedVisit && (
@@ -297,7 +337,10 @@ export const AgendaView: React.FC<AgendaViewProps> = ({ onOpenScheduleVisitModal
           <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-5 shadow-2xl space-y-4">
             <div className="flex items-start justify-between border-b border-slate-800 pb-3">
               <div>
-                <h3 className="font-black text-white flex items-center gap-2">{coordinatorRole ? <Pencil className="w-4 h-4 text-cyan-400" /> : <Eye className="w-4 h-4 text-cyan-400" />}{coordinatorRole ? 'Editar visita programada' : 'Detalle de visita'}</h3>
+                <h3 className="font-black text-white flex items-center gap-2">
+                  {plannerRole ? <Pencil className="w-4 h-4 text-cyan-400" /> : <Eye className="w-4 h-4 text-cyan-400" />}
+                  {plannerRole ? 'Editar visita programada' : 'Detalle de visita'}
+                </h3>
                 <p className="text-xs text-slate-400 mt-1">{selectedVisit.clientName} · {selectedVisit.address}</p>
               </div>
               <button onClick={() => setSelectedVisit(null)} className="p-2 rounded-lg bg-slate-800 text-slate-400 hover:text-white"><X className="w-4 h-4" /></button>
@@ -306,21 +349,56 @@ export const AgendaView: React.FC<AgendaViewProps> = ({ onOpenScheduleVisitModal
             {editError && <div className="bg-red-950 border border-red-800 text-red-200 rounded-xl p-3 text-xs">{editError}</div>}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-              <div className="sm:col-span-2"><label className="block text-slate-300 font-bold mb-1">Fecha</label><input disabled={!coordinatorRole} type="date" value={editForm.date} onChange={e => setEditForm({ ...editForm, date: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white disabled:opacity-70" /></div>
-              <div><label className="block text-slate-300 font-bold mb-1">Hora inicio</label><input disabled={!coordinatorRole} type="time" value={editForm.startTime} onChange={e => setEditForm({ ...editForm, startTime: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white disabled:opacity-70" /></div>
-              <div><label className="block text-slate-300 font-bold mb-1">Hora fin</label><input disabled={!coordinatorRole} type="time" value={editForm.estimatedEndTime} onChange={e => setEditForm({ ...editForm, estimatedEndTime: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white disabled:opacity-70" /></div>
-              <div className="sm:col-span-2"><label className="block text-slate-300 font-bold mb-1 flex items-center gap-1"><UserCheck className="w-3.5 h-3.5 text-cyan-400" />Profesional responsable</label><select disabled={!coordinatorRole} value={editForm.responsibleProfessionalId} onChange={e => setEditForm({ ...editForm, responsibleProfessionalId: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white disabled:opacity-70"><option value="">Seleccione profesional...</option>{professionals.map(p => <option key={p.id} value={p.id}>{p.full_name}</option>)}</select></div>
-              <div className="sm:col-span-2"><label className="block text-slate-300 font-bold mb-1">Estado</label><select disabled={!coordinatorRole} value={editForm.status} onChange={e => setEditForm({ ...editForm, status: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white disabled:opacity-70"><option value="PROGRAMADA">PROGRAMADA</option><option value="CONFIRMADA">CONFIRMADA</option><option value="EN RUTA">EN RUTA</option><option value="EN SITIO">EN SITIO</option><option value="EN INSPECCIÓN">EN INSPECCIÓN</option><option value="TERMINADA">TERMINADA</option><option value="REPROGRAMADA">REPROGRAMADA</option><option value="CANCELADA">CANCELADA</option></select></div>
-              <div className="sm:col-span-2"><label className="block text-slate-300 font-bold mb-1">Objetivo de la visita</label><textarea disabled={!coordinatorRole} rows={3} value={editForm.visitObjective} onChange={e => setEditForm({ ...editForm, visitObjective: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white disabled:opacity-70" /></div>
+              <div className="sm:col-span-2">
+                <label className="block text-slate-300 font-bold mb-1">Fecha</label>
+                <input disabled={!plannerRole} type="date" value={editForm.date} onChange={e => setEditForm({ ...editForm, date: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white disabled:opacity-70" />
+              </div>
+              <div>
+                <label className="block text-slate-300 font-bold mb-1">Hora inicio</label>
+                <input disabled={!plannerRole} type="time" value={editForm.startTime} onChange={e => setEditForm({ ...editForm, startTime: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white disabled:opacity-70" />
+              </div>
+              <div>
+                <label className="block text-slate-300 font-bold mb-1">Hora fin</label>
+                <input disabled={!plannerRole} type="time" value={editForm.estimatedEndTime} onChange={e => setEditForm({ ...editForm, estimatedEndTime: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white disabled:opacity-70" />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-slate-300 font-bold mb-1 flex items-center gap-1"><UserCheck className="w-3.5 h-3.5 text-cyan-400" />Profesional responsable</label>
+                <select disabled={!plannerRole} value={editForm.responsibleProfessionalId} onChange={e => setEditForm({ ...editForm, responsibleProfessionalId: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white disabled:opacity-70">
+                  <option value="">Seleccione profesional...</option>
+                  {professionals.map(p => <option key={p.id} value={p.id}>{p.full_name}</option>)}
+                </select>
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-slate-300 font-bold mb-1">Estado</label>
+                <select disabled={!plannerRole} value={editForm.status} onChange={e => setEditForm({ ...editForm, status: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white disabled:opacity-70">
+                  <option value="PROGRAMADA">PROGRAMADA</option>
+                  <option value="CONFIRMADA">CONFIRMADA</option>
+                  <option value="EN RUTA">EN RUTA</option>
+                  <option value="EN SITIO">EN SITIO</option>
+                  <option value="EN INSPECCIÓN">EN INSPECCIÓN</option>
+                  <option value="TERMINADA">TERMINADA</option>
+                  <option value="REPROGRAMADA">REPROGRAMADA</option>
+                  <option value="CANCELADA">CANCELADA</option>
+                </select>
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-slate-300 font-bold mb-1">Objetivo de la visita</label>
+                <textarea disabled={!plannerRole} rows={3} value={editForm.visitObjective} onChange={e => setEditForm({ ...editForm, visitObjective: e.target.value })} className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white disabled:opacity-70" />
+              </div>
             </div>
 
             <div className="flex justify-between gap-2 pt-2 border-t border-slate-800">
-              {coordinatorRole ? (
-                <button disabled={editSaving} onClick={deleteVisit} className="px-4 py-2 rounded-xl bg-red-950 border border-red-800 text-red-300 text-xs font-bold flex items-center gap-1"><Trash2 className="w-4 h-4" />Eliminar visita</button>
-              ) : <span className="text-[11px] text-slate-500">Modo lectura</span>}
+              {plannerRole ? (
+                <button disabled={editSaving} onClick={deleteVisit} className="px-4 py-2 rounded-xl bg-red-950 border border-red-800 text-red-300 text-xs font-bold flex items-center gap-1">
+                  <Trash2 className="w-4 h-4" />Eliminar visita
+                </button>
+              ) : (
+                <span className="text-[11px] text-slate-500">Modo lectura</span>
+              )}
+
               <div className="flex gap-2">
                 <button onClick={() => setSelectedVisit(null)} className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold">Cerrar</button>
-                {coordinatorRole && (
+                {plannerRole && (
                   <button disabled={editSaving} onClick={saveVisitChanges} className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-2">
                     {editSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}Guardar cambios
                   </button>
