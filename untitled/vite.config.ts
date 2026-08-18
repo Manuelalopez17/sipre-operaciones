@@ -10,6 +10,51 @@ function sipreRuntimeFixes(): Plugin {
     transform(code, id) {
       let next = code;
 
+      if (id.endsWith('/src/context/AuthContext.tsx') || id.endsWith('\\src\\context\\AuthContext.tsx')) {
+        // CS Grupo Tecnico is an operational coordination account even if its
+        // existing Supabase profile was initially created as inspector.
+        next = next.replace(
+          '    setProfile(p);',
+          `    const authenticatedEmail = String(authUser?.email || p?.email || '').trim().toLowerCase();\n    if (p && authenticatedEmail === 'csgrupotecnico2026@gmail.com') {\n      p = { ...p, role: 'coordinator', email: authUser?.email || p.email };\n    }\n    setProfile(p);`
+        );
+
+        // Do not expose the coordination account as an assignable professional.
+        next = next.replace(
+          '    setActiveProfiles(profiles);',
+          `    setActiveProfiles(profiles.map((item) => {\n      const email = String(item.email || '').trim().toLowerCase();\n      return email === 'csgrupotecnico2026@gmail.com' ? { ...item, role: 'coordinator' as const } : item;\n    }));`
+        );
+      }
+
+      if (id.endsWith('/src/App.tsx') || id.endsWith('\\src\\App.tsx')) {
+        // Expedientes/emergencia keep their original planner permissions.
+        // Visit coordination, however, is available to every non-professional role.
+        next = next.replace(
+          '  const planner = isCoordinator(profile?.role) || isManagement(profile?.role);',
+          `  const planner = isCoordinator(profile?.role) || isManagement(profile?.role);\n  const visitPlanner = !isProfessional(profile?.role);`
+        );
+        next = next.replace(
+          '  const openScheduleVisit = () => {\n    if (!planner) {',
+          '  const openScheduleVisit = () => {\n    if (!visitPlanner) {'
+        );
+        next = next.replace(
+          '<ScheduleVisitModal isOpen={isScheduleVisitModalOpen && planner}',
+          '<ScheduleVisitModal isOpen={isScheduleVisitModalOpen && visitPlanner}'
+        );
+      }
+
+      if (
+        id.endsWith('/src/components/AgendaView.tsx') ||
+        id.endsWith('\\src\\components\\AgendaView.tsx') ||
+        id.endsWith('/src/components/VisitsView.tsx') ||
+        id.endsWith('\\src\\components\\VisitsView.tsx')
+      ) {
+        // Only professionals are excluded from visit coordination.
+        next = next.replace(
+          '  const planner = isCoordinator(profile?.role) || isManagement(profile?.role);',
+          '  const planner = !isProfessional(profile?.role);'
+        );
+      }
+
       if (id.endsWith('/src/components/FieldModeView.tsx') || id.endsWith('\\src\\components\\FieldModeView.tsx')) {
         // Keep camera/video/audio/document inputs mounted for every field step.
         const mediaInputs = /\s*<input ref=\{photoCaptureRef\}[\s\S]*?<input ref=\{documentFileRef\}[\s\S]*?\/>/m;
