@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ClipboardList, MapPin, Clock, UserCheck, PlusCircle, Navigation, Play, CheckCircle2, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
+import { ClipboardList, MapPin, Clock, PlusCircle, Navigation, Play, CheckCircle2, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
 import { VisitRecord } from '../types';
 import { getVisitsFromDb, subscribeVisitsRealtime } from '../lib/remoteCore';
 import { getSupabaseClient } from '../lib/supabaseClient';
 import { useAuth } from '../context/AuthContext';
-import { isCoordinator, isManagement, isProfessional } from '../lib/roles';
+import { isPlanner, isProfessional } from '../lib/roles';
 
 interface VisitsViewProps {
   onOpenScheduleVisitModal: () => void;
@@ -20,8 +20,7 @@ export const VisitsView: React.FC<VisitsViewProps> = ({ onOpenScheduleVisitModal
   const [error, setError] = useState<string | null>(null);
 
   const professionalRole = isProfessional(profile?.role);
-  const coordinatorRole = isCoordinator(profile?.role);
-  const managementRole = isManagement(profile?.role);
+  const plannerRole = isPlanner(profile?.role);
 
   const reload = async () => {
     try {
@@ -139,11 +138,9 @@ export const VisitsView: React.FC<VisitsViewProps> = ({ onOpenScheduleVisitModal
           </h1>
           <p className="text-xs text-slate-400 mt-1">
             {professionalRole
-              ? 'Solo puedes operar las visitas que están asignadas a tu usuario.'
-              : coordinatorRole
-              ? 'Seguimiento de todas las visitas. La edición, reasignación y eliminación se realiza desde Agenda.'
-              : managementRole
-              ? 'Vista de seguimiento en modo lectura. Gerencia no modifica la operación técnica.'
+              ? 'Aquí están tus visitas asignadas. Solo tú puedes ejecutar sus acciones de campo.'
+              : plannerRole
+              ? 'Coordinación/Gerencia ven todas las visitas y administran su programación desde Agenda.'
               : 'Vista operativa en modo consulta.'}
           </p>
         </div>
@@ -151,7 +148,7 @@ export const VisitsView: React.FC<VisitsViewProps> = ({ onOpenScheduleVisitModal
           <button onClick={reload} className="bg-slate-800 text-slate-300 px-3 py-2 rounded-xl text-xs flex items-center gap-1">
             <RefreshCw className="w-4 h-4" />Actualizar
           </button>
-          {coordinatorRole && (
+          {plannerRole && (
             <button onClick={onOpenScheduleVisitModal} className="bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2">
               <PlusCircle className="w-4 h-4" />PROGRAMAR VISITA
             </button>
@@ -165,7 +162,9 @@ export const VisitsView: React.FC<VisitsViewProps> = ({ onOpenScheduleVisitModal
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3 flex items-center gap-2 text-xs text-slate-300">
         <ShieldCheck className="w-4 h-4 text-cyan-400" />
         <span>
-          {professionalRole ? `Mostrando únicamente visitas asignadas a ${profile?.full_name || 'tu usuario'}.` : `Mostrando ${visible.length} visita(s) registradas.`}
+          {professionalRole
+            ? `Mostrando únicamente visitas asignadas a ${profile?.full_name || 'tu usuario'}.`
+            : `Mostrando ${visible.length} visita(s) registradas en SIPRE.`}
         </span>
       </div>
 
@@ -215,13 +214,15 @@ export const VisitsView: React.FC<VisitsViewProps> = ({ onOpenScheduleVisitModal
                       <button onClick={() => onStartFieldMode(v)} className="bg-purple-700 px-3 py-2 rounded-lg text-xs font-bold">Continuar inspección</button>
                     )}
                     {v.status === 'EN INSPECCIÓN' && (
-                      <button disabled={acting === v.id} onClick={() => updateStatus(v, 'TERMINADA')} className="bg-slate-700 px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" />Terminar</button>
+                      <button disabled={acting === v.id} onClick={() => updateStatus(v, 'TERMINADA')} className="bg-slate-700 px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" />Terminar visita</button>
                     )}
                     {acting === v.id && <span className="text-xs text-cyan-300 flex items-center gap-1"><Loader2 className="w-3.5 h-3.5 animate-spin" />Guardando...</span>}
                   </div>
                 ) : (
                   <div className="text-[11px] text-slate-500 border-t border-slate-800 pt-3">
-                    {coordinatorRole ? 'Seguimiento únicamente. Para corregir, reasignar o eliminar esta visita usa Agenda.' : 'Modo lectura: las acciones de campo pertenecen al profesional asignado.'}
+                    {plannerRole
+                      ? 'Seguimiento únicamente. Para editar, reasignar, corregir estado o eliminar usa Agenda.'
+                      : 'Modo lectura: las acciones de campo pertenecen al profesional asignado.'}
                   </div>
                 )}
               </div>
