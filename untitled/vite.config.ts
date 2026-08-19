@@ -27,6 +27,10 @@ function sipreRuntimeFixes(): Plugin {
           "import { Dashboard } from './components/Dashboard';\nimport { OperationalOverview } from './components/OperationalOverview';"
         );
         next = next.replace(
+          "import { MaterialsView } from './components/MaterialsView';",
+          "import { MaterialsView } from './components/MaterialRequestsRemoteView';"
+        );
+        next = next.replace(
           '  const planner = isCoordinator(profile?.role) || isManagement(profile?.role);',
           `  const planner = isCoordinator(profile?.role) || isManagement(profile?.role);\n  const visitPlanner = !isProfessional(profile?.role);`
         );
@@ -41,6 +45,17 @@ function sipreRuntimeFixes(): Plugin {
         next = next.replace(
           "{activeView === 'dashboard' && <Dashboard onNavigate={handleNavigate} onOpenNewCaseModal={openNewCase} onOpenScheduleVisitModal={openScheduleVisit} />}",
           "{activeView === 'dashboard' && <><Dashboard onNavigate={handleNavigate} onOpenNewCaseModal={openNewCase} onOpenScheduleVisitModal={openScheduleVisit} /><OperationalOverview /></>}"
+        );
+      }
+
+      if (id.endsWith('/src/components/Header.tsx') || id.endsWith('\\src\\components\\Header.tsx')) {
+        next = next.replace(
+          '  LogOut,\n  User\n} from \'lucide-react\';',
+          '  LogOut,\n  User,\n  FileCheck2\n} from \'lucide-react\';'
+        );
+        next = next.replace(
+          "    { id: 'visits', label: 'VISITAS', icon: ClipboardList },",
+          "    { id: 'visits', label: 'VISITAS', icon: ClipboardList },\n    { id: 'technical-review', label: 'CONCEPTOS', icon: FileCheck2 },"
         );
       }
 
@@ -146,9 +161,25 @@ function sipreRuntimeFixes(): Plugin {
       }
 
       if (id.endsWith('/src/components/Dashboard.tsx') || id.endsWith('\\src\\components\\Dashboard.tsx')) {
+        next = next.replace("import React, { useState } from 'react';", "import React, { useEffect, useState } from 'react';");
+        if (!next.includes("from '../lib/supabaseClient'")) {
+          next = next.replace("import { useAuth } from '../context/AuthContext';", "import { useAuth } from '../context/AuthContext';\nimport { getSupabaseClient } from '../lib/supabaseClient';");
+        }
         next = next.replace(
           "const [selectedRoleView, setSelectedRoleView] = useState<'PROFESIONAL' | 'COORDINADOR' | 'GERENCIA' | 'OPERATIVO'>(userRoleCategory);",
           "const selectedRoleView = userRoleCategory;\n  const setSelectedRoleView = (_role: 'PROFESIONAL' | 'COORDINADOR' | 'GERENCIA' | 'OPERATIVO') => {};"
+        );
+        next = next.replace(
+          "  const userId = user?.id || '';",
+          `  const userId = user?.id || '';\n  const [remoteDecidedVisitIds, setRemoteDecidedVisitIds] = useState<Set<string>>(new Set());\n\n  useEffect(() => {\n    const client = getSupabaseClient();\n    if (!client) return;\n    const loadDecisionVisits = async () => {\n      const { data } = await client.from('technical_decisions').select('visit_id');\n      setRemoteDecidedVisitIds(new Set((data || []).map((row: any) => row.visit_id).filter(Boolean)));\n    };\n    loadDecisionVisits();\n    const channel = client.channel('sipre-dashboard-decisions-' + Math.random().toString(36).slice(2))\n      .on('postgres_changes', { event: '*', schema: 'public', table: 'technical_decisions' }, loadDecisionVisits)\n      .subscribe();\n    const timer = window.setInterval(loadDecisionVisits, 8000);\n    return () => { client.removeChannel(channel); window.clearInterval(timer); };\n  }, [user?.id]);`
+        );
+        next = next.replace(
+          "const myPendingReports = visits.filter(v => isAssignedToUser(v) && (v.status === 'TERMINADA' || v.status === 'EN INSPECCIÓN'));",
+          "const myPendingReports = visits.filter(v => isAssignedToUser(v) && v.status === 'TERMINADA' && !remoteDecidedVisitIds.has(v.id));"
+        );
+        next = next.replace(
+          "onClick={() => onNavigate('technical-review')}\n                        className=\"bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg\"",
+          "onClick={() => { sessionStorage.setItem('sipre_selected_review_visit', v.id); onNavigate('technical-review'); }}\n                        className=\"bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg\""
         );
         next = next.replace(
           '          {/* Role Perspective Switcher for Initial Team Verification */}\n          <div className="flex items-center gap-1 bg-slate-950/80 p-1.5 rounded-xl border border-slate-800">',
