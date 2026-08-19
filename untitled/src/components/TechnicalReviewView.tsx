@@ -1,245 +1,216 @@
-import React, { useState } from 'react';
-import { 
-  FileText, 
-  CheckCircle2, 
-  AlertTriangle, 
-  ShieldCheck, 
-  UserCheck, 
-  ArrowRight, 
-  Info, 
-  Clock, 
-  Wrench,
-  Search,
-  Filter,
-  Lock
-} from 'lucide-react';
-import { RepairDecisionOption, TechnicalDecisionRecord, TechnicalDecisionType } from '../types';
+import React, { useEffect, useMemo, useState } from 'react';
+import { FileText, CheckCircle2, Clock, Wrench, RefreshCw, Loader2, UserCheck, MapPin, Eye, X } from 'lucide-react';
+import { VisitRecord } from '../types';
 import { useAuth } from '../context/AuthContext';
-import { canIssueTechnicalConclusion, getDisplayRole } from '../lib/roles';
-import { recordActivity } from '../lib/supabaseService';
+import { isProfessional } from '../lib/roles';
+import { getVisitsFromDb } from '../lib/remoteCore';
+import { getSupabaseClient } from '../lib/supabaseClient';
+import { getWorkFrontsFromDb } from '../lib/workFrontRemote';
+import {
+  getClientApprovalsRemote,
+  getTechnicalDecisionsRemote,
+  RemoteClientApproval,
+  RemoteTechnicalDecision,
+  saveTechnicalDecisionRemote,
+  subscribeWorkflowRemote,
+} from '../lib/workflowRemote';
+import { WorkFrontRecord } from '../types';
 
 interface TechnicalReviewViewProps {
   onNavigateToClientApproval?: () => void;
 }
 
-export const TechnicalReviewView: React.FC<TechnicalReviewViewProps> = ({
-  onNavigateToClientApproval,
-}) => {
+const upper = (value?: string) => String(value || '').trim().toUpperCase();
+const prettyDate = (value?: string) => value ? new Date(value).toLocaleString('es-CO') : '';
+
+export const TechnicalReviewView: React.FC<TechnicalReviewViewProps> = ({ onNavigateToClientApproval }) => {
   const { user, profile } = useAuth();
-  const [selectedDecision, setSelectedDecision] = useState<RepairDecisionOption>('REQUIERE INTERVENCIÓN');
-  const [formData, setFormData] = useState({
-    technicalJustification: 'Basado en los hallazgos en campo (fisuración diagonal por cortante en columna C-2 del primer piso y pérdida de confinamiento), la estructura requiere reforzamiento y rigidización para restablecer la capacidad sismorresistente según NSR-10.',
-    proposedIntervention: 'Encamisado de concreto reforzado o refuerzo con polímeros reforzados con fibra de carbono (CFRP) en columna C-2, más inyección epóxica en fisuras estructurales.',
-    temporaryMeasures: 'Instalación inmediata de puntales metálicos de alta capacidad (apuntalamiento temporal) en el pórtico adyacente a la columna C-2.',
-    additionalStudies: 'Extracción de núcleos de concreto (ASTM C42) y ensayo de esclerometría para verificar resistencia a la compresión f\'c in-situ.',
-    responsibleProfessional: profile?.full_name || 'Ing. Especialista en Estructuras',
-    professionalLicense: profile?.professional_license || 'CPN-12345-COL',
-  });
+  const [visits, setVisits] = useState<VisitRecord[]>([]);
+  const [decisions, setDecisions] = useState<RemoteTechnicalDecision[]>([]);
+  const [approvals, setApprovals] = useState<RemoteClientApproval[]>([]);
+  const [fronts, setFronts] = useState<WorkFrontRecord[]>([]);
+  const [selectedVisit, setSelectedVisit] = useState<VisitRecord | null>(null);
+  const [selectedDecision, setSelectedDecision] = useState('');
+  const [formData, setFormData] = useState({ technicalJustification: '', proposedIntervention: '', temporaryMeasures: '', additionalStudies: '' });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  const [devMessage, setDevMessage] = useState<string | null>(null);
-  const userAllowed = canIssueTechnicalConclusion(profile?.role);
+  const professional = isProfessional(profile?.role);
+  const myName = (profile?.full_name || '').trim().toLowerCase();
 
-  const decisionOptions: { type: TechnicalDecisionType; desc: string; color: string }[] = [
-    { type: 'NO REQUIERE INTERVENCIÓN', desc: 'Afectaciones menores o cosméticas sin compromiso estructural.', color: 'text-emerald-400 border-emerald-700/60 bg-emerald-950/40' },
-    { type: 'REQUIERE INTERVENCIÓN', desc: 'Daños estructurales que exigen obras de reparación o reforzamiento.', color: 'text-rose-400 border-rose-700/60 bg-rose-950/40' },
-    { type: 'REQUIERE EVALUACIÓN ADICIONAL', desc: 'Análisis detallado de vulnerabilidad o modelación numérica requerida.', color: 'text-amber-400 border-amber-700/60 bg-amber-950/40' },
-    { type: 'REQUIERE ENSAYOS', desc: 'Ensayos no destructivos o destructivos (núcleos, ultrasonido, ferroscan).', color: 'text-cyan-400 border-cyan-700/60 bg-cyan-950/40' },
-    { type: 'REQUIERE INFORMACIÓN ADICIONAL', desc: 'Pendiente de entrega de planos o memorias de cálculo originales.', color: 'text-purple-400 border-purple-700/60 bg-purple-950/40' },
-  ];
-
-  const handleSaveDecision = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!userAllowed) {
-      setDevMessage('Acción no permitida para rol Operativo. La emisión de dictámenes técnicos requiere rol Profesional o Gerencia.');
-      setTimeout(() => setDevMessage(null), 4000);
-      return;
-    }
-
-    recordActivity(
-      `Dictamen técnico emitido: ${selectedDecision}`,
-      { decision: selectedDecision, professional: formData.responsibleProfessional },
-      {
-        userId: user?.id,
-        userName: profile?.full_name || formData.responsibleProfessional,
-        userRole: profile?.role,
-        entityType: 'technical_decision',
-      }
-    );
-
-    setDevMessage('Concepto técnico estructural registrado exitosamente.');
-    setTimeout(() => {
-      setDevMessage(null);
-      if (onNavigateToClientApproval) {
-        onNavigateToClientApproval();
-      }
-    }, 2000);
+  const assignedToMe = (visit: VisitRecord) => {
+    const assignedId = (visit as any).responsibleProfessionalId || '';
+    const assignedName = (visit.responsibleProfessional || '').trim().toLowerCase();
+    return Boolean((user?.id && assignedId === user.id) || (myName && assignedName === myName));
   };
 
-  return (
-    <div id="sipre-technical-review-screen" className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-      
-      {/* Header */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center space-x-2">
-            <span className="text-xs font-mono font-bold tracking-widest text-cyan-400 uppercase">
-              Dictamen Especializado
-            </span>
-          </div>
-          <h1 className="text-2xl font-black text-white tracking-tight flex items-center space-x-2.5">
-            <FileText className="w-6 h-6 text-cyan-400" />
-            <span>Revisión Técnica y Concepto Estructural</span>
-          </h1>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Emisión de dictamen profesional, prescripción de medidas y decisión de intervención
-          </p>
-        </div>
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [visitRows, decisionRows, approvalRows, frontRows] = await Promise.all([
+        getVisitsFromDb(),
+        getTechnicalDecisionsRemote(),
+        getClientApprovalsRemote().catch(() => []),
+        getWorkFrontsFromDb().catch(() => []),
+      ]);
+      setVisits(visitRows);
+      setDecisions(decisionRows);
+      setApprovals(approvalRows);
+      setFronts(frontRows);
+      setError(null);
+    } catch (e: any) {
+      setError(e?.message || 'No se pudo cargar la bandeja de conceptos técnicos.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-        <span className="bg-amber-950/80 text-amber-300 border border-amber-700/80 px-3 py-1.5 rounded-xl text-xs font-bold font-mono">
-          0 Casos Pendientes en Cola
-        </span>
+  useEffect(() => {
+    load();
+    const unsubscribe = subscribeWorkflowRemote(load);
+    const timer = window.setInterval(load, 8000);
+    return () => { unsubscribe(); window.clearInterval(timer); };
+  }, [user?.id, profile?.full_name, profile?.role]);
+
+  const visibleVisits = useMemo(() => professional ? visits.filter(assignedToMe) : visits, [visits, professional, user?.id, myName]);
+  const decisionVisitIds = useMemo(() => new Set(decisions.map(d => d.visitId).filter(Boolean)), [decisions]);
+  const pending = useMemo(() => visibleVisits.filter(v => upper(v.status) === 'TERMINADA' && !decisionVisitIds.has(v.id)), [visibleVisits, decisionVisitIds]);
+
+  const latestApprovalByDecision = useMemo(() => {
+    const map = new Map<string, RemoteClientApproval>();
+    approvals.forEach(a => { if (!map.has(a.decisionId)) map.set(a.decisionId, a); });
+    return map;
+  }, [approvals]);
+
+  const visibleDecisions = useMemo(() => {
+    const visitIds = new Set(visibleVisits.map(v => v.id));
+    return professional ? decisions.filter(d => !!d.visitId && visitIds.has(d.visitId)) : decisions;
+  }, [decisions, visibleVisits, professional]);
+
+  const openForm = async (visit: VisitRecord) => {
+    if (!professional || !assignedToMe(visit)) return;
+    setSelectedVisit(visit);
+    setSelectedDecision('');
+    setFormData({ technicalJustification: '', proposedIntervention: '', temporaryMeasures: '', additionalStudies: '' });
+    setError(null);
+
+    const client = getSupabaseClient();
+    if (client) {
+      const { data } = await client.from('visit_assessments').select('*').eq('visit_id', visit.id).maybeSingle();
+      if (data) {
+        setFormData({
+          technicalJustification: data.professional_conclusion || data.main_findings_summary || '',
+          proposedIntervention: '',
+          temporaryMeasures: data.temporary_measures || '',
+          additionalStudies: data.additional_studies || '',
+        });
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (loading || selectedVisit || !professional) return;
+    const requested = sessionStorage.getItem('sipre_selected_review_visit');
+    if (!requested) return;
+    const visit = pending.find(v => v.id === requested);
+    if (visit) openForm(visit);
+    sessionStorage.removeItem('sipre_selected_review_visit');
+  }, [loading, pending.length, professional]);
+
+  const emitConcept = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedVisit || !professional || !assignedToMe(selectedVisit)) return;
+    if (!selectedDecision) return setError('Selecciona la decisión técnica principal.');
+    if (!formData.technicalJustification.trim()) return setError('Escribe la justificación técnica del concepto.');
+    if (selectedDecision === 'REQUIERE INTERVENCIÓN' && !formData.proposedIntervention.trim()) {
+      return setError('Para una intervención debes indicar el alcance técnico propuesto.');
+    }
+    if (!selectedVisit.caseId) return setError('La visita no tiene un expediente vinculado y no se puede emitir el concepto.');
+
+    setSaving(true);
+    setError(null);
+    try {
+      await saveTechnicalDecisionRemote({
+        caseId: selectedVisit.caseId,
+        visitId: selectedVisit.id,
+        decision: selectedDecision,
+        technicalJustification: formData.technicalJustification,
+        proposedIntervention: formData.proposedIntervention,
+        temporaryMeasures: formData.temporaryMeasures,
+        additionalStudies: formData.additionalStudies,
+        responsibleProfessional: profile?.full_name || selectedVisit.responsibleProfessional,
+        userId: user?.id,
+      });
+      setNotice(selectedDecision === 'REQUIERE INTERVENCIÓN'
+        ? 'Concepto guardado en Supabase. El caso pasó a aprobación del cliente.'
+        : 'Concepto guardado en Supabase y retirado de informes pendientes.');
+      setSelectedVisit(null);
+      await load();
+      window.setTimeout(() => setNotice(null), 5000);
+    } catch (e: any) {
+      setError(e?.message || 'No se pudo emitir el concepto técnico.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const goApproval = (decision: RemoteTechnicalDecision) => {
+    sessionStorage.setItem('sipre_selected_approval_decision', decision.id);
+    onNavigateToClientApproval?.();
+  };
+
+  const decisionOptions = ['NO REQUIERE INTERVENCIÓN', 'REQUIERE INTERVENCIÓN', 'REQUIERE EVALUACIÓN ADICIONAL', 'REQUIERE ENSAYOS'];
+
+  return (
+    <div id="sipre-technical-review-screen" className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-5">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div>
+          <div className="text-xs font-mono font-bold tracking-widest text-cyan-400 uppercase">Conceptos Técnicos</div>
+          <h1 className="text-2xl font-black text-white flex items-center gap-2 mt-1"><FileText className="w-6 h-6 text-cyan-400" />Bandeja e informe consolidado de conceptos</h1>
+          <p className="text-xs text-slate-400 mt-1">Los conceptos de esta pantalla se leen y guardan directamente en Supabase.</p>
+        </div>
+        <div className="flex items-center gap-2"><span className="px-3 py-2 rounded-xl bg-amber-950 border border-amber-800 text-amber-300 text-xs font-bold">{pending.length} pendiente(s)</span><button onClick={load} className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-slate-200 flex items-center gap-1"><RefreshCw className="w-4 h-4" />Actualizar</button></div>
       </div>
 
-      {devMessage && (
-        <div className="p-4 rounded-xl bg-amber-950/80 border border-amber-600 text-amber-200 font-bold text-center flex items-center justify-center space-x-2 animate-pulse text-xs">
-          <CheckCircle2 className="w-5 h-5 text-amber-400" />
-          <span>{devMessage}</span>
-        </div>
+      {notice && <div className="bg-emerald-950 border border-emerald-800 text-emerald-300 rounded-xl p-3 text-xs font-bold">{notice}</div>}
+      {error && <div className="bg-red-950 border border-red-800 text-red-300 rounded-xl p-3 text-xs">{error}</div>}
+
+      {loading ? <div className="bg-slate-900 border border-slate-800 rounded-2xl p-10 text-center text-slate-400"><Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />Cargando conceptos...</div> : (
+        <>
+          <section className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3"><div><h2 className="font-black text-white">Pendientes de concepto</h2><p className="text-xs text-slate-400">Solo aparecen visitas terminadas que todavía no tienen concepto emitido.</p></div><span className="font-mono text-amber-500 text-sm">{pending.length}</span></div>
+            {pending.length ? <div className="grid grid-cols-1 md:grid-cols-2 gap-3">{pending.map(v => <div key={v.id} className="bg-slate-950 border border-slate-800 rounded-xl p-4 text-xs flex items-center justify-between gap-3"><div><div className="font-black text-white">{v.clientName}</div><div className="text-slate-400 mt-1 flex items-center gap-1"><MapPin className="w-3.5 h-3.5" />{v.address}, {v.municipality}</div><div className="text-slate-500 mt-1"><UserCheck className="w-3.5 h-3.5 inline mr-1" />{v.responsibleProfessional}</div></div>{professional && assignedToMe(v) ? <button onClick={() => openForm(v)} className="px-3 py-2 rounded-lg bg-amber-600 text-white font-bold">Emitir concepto</button> : <span className="text-[10px] text-slate-500">Seguimiento</span>}</div>)}</div> : <div className="text-xs text-slate-500 py-5 text-center">No hay visitas terminadas pendientes de concepto para este usuario.</div>}
+          </section>
+
+          <section className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3"><div><h2 className="font-black text-white">Resumen de conceptos emitidos</h2><p className="text-xs text-slate-400">Consolidado remoto con decisión, justificación, aprobación y frente derivado.</p></div><span className="font-mono text-cyan-500 text-sm">{visibleDecisions.length}</span></div>
+            {visibleDecisions.length ? <div className="space-y-3">{visibleDecisions.map(d => {
+              const visit = visits.find(v => v.id === d.visitId);
+              const approval = latestApprovalByDecision.get(d.id);
+              const front = fronts.find(f => f.visitId === d.visitId);
+              const intervention = upper(d.decision) === 'REQUIERE INTERVENCIÓN';
+              return <article key={d.id} className="bg-slate-950 border border-slate-800 rounded-xl p-4 text-xs space-y-3">
+                <div className="flex flex-col md:flex-row md:items-start justify-between gap-3"><div><div className="text-base font-black text-white">{visit?.clientName || visit?.address || d.caseId}</div><div className="text-slate-400 mt-1">{visit?.address || ''}</div></div><span className={`px-2.5 py-1 rounded-full font-bold border ${intervention ? 'bg-amber-950 text-amber-300 border-amber-800' : 'bg-emerald-950 text-emerald-300 border-emerald-800'}`}>{d.decision}</span></div>
+                <div><div className="text-[10px] font-bold text-slate-500 uppercase">Justificación técnica</div><p className="text-slate-300 mt-1 whitespace-pre-wrap">{d.technicalJustification}</p></div>
+                {d.proposedIntervention && <div><div className="text-[10px] font-bold text-slate-500 uppercase">Intervención propuesta</div><p className="text-slate-300 mt-1 whitespace-pre-wrap">{d.proposedIntervention}</p></div>}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2"><div className="bg-slate-900 rounded-lg border border-slate-800 p-2"><span className="text-slate-500">Profesional</span><div className="font-bold text-slate-200 mt-0.5">{d.responsibleProfessional || visit?.responsibleProfessional}</div></div><div className="bg-slate-900 rounded-lg border border-slate-800 p-2"><span className="text-slate-500">Aprobación</span><div className="font-bold text-slate-200 mt-0.5">{intervention ? (approval?.status || 'Pendiente') : 'No aplica'}</div></div><div className="bg-slate-900 rounded-lg border border-slate-800 p-2"><span className="text-slate-500">Frente de obra</span><div className="font-bold text-slate-200 mt-0.5">{front ? `${front.frontCode} · ${front.status}` : (intervention ? 'Aún no creado' : 'No aplica')}</div></div></div>
+                <div className="flex items-center justify-between gap-2 border-t border-slate-800 pt-3"><span className="text-[10px] text-slate-500">Emitido: {prettyDate(d.date)}</span>{intervention && <button onClick={() => goApproval(d)} className="px-3 py-2 rounded-lg bg-cyan-600 text-white font-bold flex items-center gap-1"><Eye className="w-3.5 h-3.5" />Gestionar aprobación</button>}</div>
+              </article>;
+            })}</div> : <div className="text-xs text-slate-500 py-5 text-center">Aún no hay conceptos técnicos guardados.</div>}
+          </section>
+        </>
       )}
 
-      {/* Empty State Banner */}
-      <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 text-center space-y-3">
-        <div className="w-12 h-12 mx-auto rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-500">
-          <Clock className="w-6 h-6" />
-        </div>
-        <div>
-          <h3 className="text-sm font-bold text-slate-200">No hay expedientes pendientes de revisión técnica</h3>
-          <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
-            Cuando se finalice una visita en Modo Campo, el expediente ingresará automáticamente a esta bandeja para el concepto del ingeniero especialista.
-          </p>
-        </div>
-      </div>
-
-      {/* Technical Review Form Example / Simulator */}
-      <form onSubmit={handleSaveDecision} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5 text-xs text-slate-200">
-        <div className="border-b border-slate-800 pb-3 flex items-center justify-between">
-          <h2 className="text-sm font-bold text-white uppercase tracking-wider">
-            Formulario de Decisión Técnica Estructural
-          </h2>
-          <span className="text-[11px] font-mono text-cyan-400">NSR-10 / AIS 410</span>
-        </div>
-
-        {/* 5 Decision Options Selector */}
-        <div className="space-y-2">
-          <label className="block text-slate-400 font-semibold mb-1">Decisión Técnica Principal *</label>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-            {decisionOptions.map((opt) => (
-              <button
-                key={opt.type}
-                type="button"
-                onClick={() => setSelectedDecision(opt.type)}
-                className={`p-3 rounded-xl border text-left flex flex-col justify-between transition-all ${
-                  selectedDecision === opt.type
-                    ? `${opt.color} shadow-lg ring-1 ring-cyan-400`
-                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="font-black text-xs">{opt.type}</span>
-                  {selectedDecision === opt.type && (
-                    <CheckCircle2 className="w-4 h-4 text-cyan-400 flex-shrink-0" />
-                  )}
-                </div>
-                <p className="text-[10px] text-slate-400 leading-tight">{opt.desc}</p>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Form Fields */}
-        <div className="space-y-4 pt-2">
-          <div>
-            <label className="block text-slate-400 font-semibold mb-1">Justificación Técnica del Dictamen *</label>
-            <textarea
-              rows={3}
-              value={formData.technicalJustification}
-              onChange={(e) => setFormData({ ...formData, technicalJustification: e.target.value })}
-              className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl p-3 focus:outline-none focus:border-cyan-500"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-slate-400 font-semibold mb-1">Intervención Propuesta / Alcance Técnico</label>
-            <textarea
-              rows={3}
-              value={formData.proposedIntervention}
-              onChange={(e) => setFormData({ ...formData, proposedIntervention: e.target.value })}
-              className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl p-3 focus:outline-none focus:border-cyan-500"
-            />
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-slate-400 font-semibold mb-1">Medidas Temporales / Apuntalamientos</label>
-              <textarea
-                rows={2}
-                value={formData.temporaryMeasures}
-                onChange={(e) => setFormData({ ...formData, temporaryMeasures: e.target.value })}
-                className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl p-3 focus:outline-none focus:border-cyan-500"
-              />
-            </div>
-            <div>
-              <label className="block text-slate-400 font-semibold mb-1">Estudios Adicionales / Ensayos Requeridos</label>
-              <textarea
-                rows={2}
-                value={formData.additionalStudies}
-                onChange={(e) => setFormData({ ...formData, additionalStudies: e.target.value })}
-                className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl p-3 focus:outline-none focus:border-cyan-500"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-950 p-4 rounded-xl border border-slate-800">
-            <div>
-              <label className="block text-slate-400 font-semibold mb-1">Profesional Especialista Responsable</label>
-              <input
-                type="text"
-                value={formData.responsibleProfessional}
-                onChange={(e) => setFormData({ ...formData, responsibleProfessional: e.target.value })}
-                className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg p-2.5 focus:outline-none focus:border-cyan-500"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-slate-400 font-semibold mb-1">Matrícula Profesional (COPNIA / CPN)</label>
-              <input
-                type="text"
-                value={formData.professionalLicense}
-                onChange={(e) => setFormData({ ...formData, professionalLicense: e.target.value })}
-                className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg p-2.5 focus:outline-none focus:border-cyan-500 font-mono"
-                required
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Footer actions */}
-        <div className="flex items-center justify-between pt-3 border-t border-slate-800">
-          <span className="text-[11px] text-slate-500">
-            Al registrar el concepto, el caso avanzará a la etapa de <strong>Aprobación del Cliente</strong>.
-          </span>
-          <button
-            type="submit"
-            className="bg-cyan-600 hover:bg-cyan-500 text-white px-6 py-2.5 rounded-xl font-bold flex items-center space-x-1.5 shadow-lg shadow-cyan-600/25 active:scale-95 transition-all"
-          >
-            <CheckCircle2 className="w-4 h-4" />
-            <span>EMITIR CONCEPTO TÉCNICO</span>
-          </button>
-        </div>
-
-      </form>
-
+      {selectedVisit && <div className="fixed inset-0 z-[70] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"><form onSubmit={emitConcept} className="bg-slate-900 border border-slate-800 rounded-2xl max-w-3xl w-full p-6 shadow-2xl space-y-5 my-6"><div className="flex items-start justify-between border-b border-slate-800 pb-3"><div><h2 className="font-black text-white">Emitir concepto técnico</h2><p className="text-xs text-slate-400 mt-1">{selectedVisit.clientName} · {selectedVisit.address}</p></div><button type="button" onClick={() => setSelectedVisit(null)} className="p-2 rounded-lg bg-slate-800 text-slate-400"><X className="w-4 h-4" /></button></div>
+        <div><label className="block text-xs font-bold text-slate-400 mb-2">Decisión técnica *</label><div className="grid grid-cols-1 sm:grid-cols-2 gap-2">{decisionOptions.map(option => <button key={option} type="button" onClick={() => setSelectedDecision(option)} className={`p-3 rounded-xl border text-left text-xs font-bold ${selectedDecision === option ? 'bg-cyan-950 border-cyan-600 text-cyan-400' : 'bg-slate-950 border-slate-800 text-slate-400'}`}>{option}</button>)}</div></div>
+        <div><label className="block text-xs font-bold text-slate-400 mb-1">Justificación técnica *</label><textarea rows={5} value={formData.technicalJustification} onChange={e => setFormData({ ...formData, technicalJustification: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white" required /></div>
+        <div><label className="block text-xs font-bold text-slate-400 mb-1">Intervención propuesta / alcance</label><textarea rows={3} value={formData.proposedIntervention} onChange={e => setFormData({ ...formData, proposedIntervention: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white" /></div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><div><label className="block text-xs font-bold text-slate-400 mb-1">Medidas temporales</label><textarea rows={3} value={formData.temporaryMeasures} onChange={e => setFormData({ ...formData, temporaryMeasures: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white" /></div><div><label className="block text-xs font-bold text-slate-400 mb-1">Estudios / ensayos adicionales</label><textarea rows={3} value={formData.additionalStudies} onChange={e => setFormData({ ...formData, additionalStudies: e.target.value })} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white" /></div></div>
+        <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs"><span className="text-slate-500">Responsable:</span> <strong className="text-slate-200">{profile?.full_name || selectedVisit.responsibleProfessional}</strong>{profile?.professional_license && <span className="text-slate-500"> · {profile.professional_license}</span>}</div>
+        <div className="flex justify-end gap-2 border-t border-slate-800 pt-3"><button type="button" onClick={() => setSelectedVisit(null)} className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold">Cancelar</button><button disabled={saving} className="px-4 py-2 rounded-xl bg-cyan-600 text-white text-xs font-bold flex items-center gap-2">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}Guardar y emitir concepto</button></div>
+      </form></div>}
     </div>
   );
 };
