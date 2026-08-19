@@ -227,6 +227,11 @@ button[class*="bg-purple-700"] * {
   color: inherit !important;
 }
 
+/* Agenda: stronger contrast for visit time/client in monthly cards */
+button[class*="bg-cyan-950"][class*="text-cyan-200"] > div:first-child {
+  color: #111827 !important;
+}
+
 /* Softer shadows for a professional daytime interface */
 .shadow-xl,
 .shadow-lg,
