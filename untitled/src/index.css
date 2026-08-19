@@ -1,1 +1,241 @@
 @import "tailwindcss";
+
+/*
+ * SIPRE LIGHT THEME
+ * Visual-only overrides. No Supabase data, visits, cases, profiles or reports are modified here.
+ * Backup branch before this change: backup-before-light-theme-20260819
+ */
+
+:root {
+  color-scheme: light;
+  --sipre-bg: #f4f7fb;
+  --sipre-surface: #ffffff;
+  --sipre-surface-soft: #f8fafc;
+  --sipre-surface-muted: #eef2f7;
+  --sipre-border: #dbe3ec;
+  --sipre-border-strong: #cbd5e1;
+  --sipre-text: #172033;
+  --sipre-text-soft: #475569;
+  --sipre-text-muted: #64748b;
+  --sipre-primary: #0f766e;
+  --sipre-primary-hover: #0d9488;
+  --sipre-primary-soft: #e6fffb;
+  --sipre-secondary: #2563eb;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  background: var(--sipre-bg) !important;
+  color: var(--sipre-text) !important;
+}
+
+body {
+  margin: 0;
+}
+
+/* Main neutral backgrounds */
+[class*="bg-slate-950"] {
+  background-color: var(--sipre-surface-soft) !important;
+}
+
+[class*="bg-slate-900"] {
+  background-color: var(--sipre-surface) !important;
+}
+
+[class*="bg-slate-800"] {
+  background-color: var(--sipre-surface-muted) !important;
+}
+
+[class*="bg-slate-700"] {
+  background-color: #e2e8f0 !important;
+}
+
+/* Neutral borders */
+[class*="border-slate-900"],
+[class*="border-slate-800"] {
+  border-color: var(--sipre-border) !important;
+}
+
+[class*="border-slate-700"] {
+  border-color: var(--sipre-border-strong) !important;
+}
+
+/* Neutral text */
+.text-white,
+[class*="text-slate-100"],
+[class*="text-slate-200"] {
+  color: var(--sipre-text) !important;
+}
+
+[class*="text-slate-300"] {
+  color: #334155 !important;
+}
+
+[class*="text-slate-400"] {
+  color: var(--sipre-text-soft) !important;
+}
+
+[class*="text-slate-500"],
+[class*="text-slate-600"] {
+  color: var(--sipre-text-muted) !important;
+}
+
+/* Primary SIPRE palette: cyan -> teal */
+[class*="bg-cyan-950"] {
+  background-color: #ecfdfb !important;
+}
+
+[class*="bg-cyan-900"],
+[class*="bg-cyan-800"] {
+  background-color: #ccfbf1 !important;
+}
+
+[class*="bg-cyan-600"] {
+  background-color: var(--sipre-primary) !important;
+}
+
+[class*="bg-cyan-500"] {
+  background-color: var(--sipre-primary-hover) !important;
+}
+
+[class*="text-cyan-300"],
+[class*="text-cyan-400"],
+[class*="text-cyan-500"] {
+  color: var(--sipre-primary) !important;
+}
+
+[class*="border-cyan-800"],
+[class*="border-cyan-700"],
+[class*="border-cyan-600"],
+[class*="border-cyan-500"] {
+  border-color: #99f6e4 !important;
+}
+
+/* Keep active/action buttons readable */
+[class*="bg-cyan-600"].text-white,
+[class*="bg-cyan-500"].text-white,
+[class*="bg-blue-600"].text-white,
+[class*="bg-blue-500"].text-white,
+[class*="bg-emerald-600"].text-white,
+[class*="bg-emerald-500"].text-white,
+[class*="bg-purple-600"].text-white,
+[class*="bg-purple-700"].text-white,
+[class*="bg-red-600"].text-white,
+[class*="bg-amber-600"].text-white,
+[class*="bg-gradient-to-tr"] .text-white,
+[class*="bg-gradient-to-r"] .text-white {
+  color: #ffffff !important;
+}
+
+/* Light semantic badges */
+[class*="bg-emerald-950"] {
+  background-color: #ecfdf5 !important;
+}
+
+[class*="bg-amber-950"] {
+  background-color: #fffbeb !important;
+}
+
+[class*="bg-red-950"] {
+  background-color: #fef2f2 !important;
+}
+
+[class*="bg-purple-950"] {
+  background-color: #faf5ff !important;
+}
+
+[class*="bg-blue-950"] {
+  background-color: #eff6ff !important;
+}
+
+[class*="text-emerald-200"],
+[class*="text-emerald-300"],
+[class*="text-emerald-400"] {
+  color: #047857 !important;
+}
+
+[class*="text-amber-200"],
+[class*="text-amber-300"],
+[class*="text-amber-400"] {
+  color: #b45309 !important;
+}
+
+[class*="text-red-200"],
+[class*="text-red-300"],
+[class*="text-red-400"] {
+  color: #b91c1c !important;
+}
+
+[class*="text-purple-200"],
+[class*="text-purple-300"],
+[class*="text-purple-400"] {
+  color: #7e22ce !important;
+}
+
+[class*="text-blue-200"],
+[class*="text-blue-300"],
+[class*="text-blue-400"] {
+  color: #1d4ed8 !important;
+}
+
+/* Inputs, selects and textareas */
+input,
+select,
+textarea {
+  background-color: #ffffff !important;
+  color: var(--sipre-text) !important;
+  border-color: var(--sipre-border-strong) !important;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+/* Header and cards feel cleaner on a light surface */
+#sipre-header {
+  background: rgba(255, 255, 255, 0.96) !important;
+  border-color: var(--sipre-border) !important;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06) !important;
+}
+
+#sipre-header [class*="hover:bg-slate-800"]:hover,
+#sipre-header [class*="hover:bg-slate-700"]:hover {
+  background-color: #e2e8f0 !important;
+}
+
+/* Preserve white text on solid action buttons even with nested icons */
+button[class*="bg-cyan-600"],
+button[class*="bg-cyan-500"],
+button[class*="bg-emerald-600"],
+button[class*="bg-emerald-500"],
+button[class*="bg-blue-600"],
+button[class*="bg-purple-600"],
+button[class*="bg-purple-700"] {
+  color: #ffffff !important;
+}
+
+button[class*="bg-cyan-600"] *,
+button[class*="bg-cyan-500"] *,
+button[class*="bg-emerald-600"] *,
+button[class*="bg-emerald-500"] *,
+button[class*="bg-blue-600"] *,
+button[class*="bg-purple-600"] *,
+button[class*="bg-purple-700"] * {
+  color: inherit !important;
+}
+
+/* Softer shadows for a professional daytime interface */
+.shadow-xl,
+.shadow-lg,
+.shadow-md {
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.07) !important;
+}
+
+/* Selection */
+::selection {
+  background: #99f6e4;
+  color: #134e4a;
+}
