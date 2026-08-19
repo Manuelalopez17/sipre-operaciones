@@ -25,7 +25,8 @@ import {
   UserCheck,
   LogOut,
   User,
-  FileText
+  FileText,
+  FileCheck2
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getDisplayRole } from '../lib/roles';
@@ -87,6 +88,7 @@ export const Header: React.FC<HeaderProps> = ({
     { id: 'agenda', label: 'AGENDA', icon: Calendar },
     { id: 'visits', label: 'VISITAS', icon: ClipboardList },
     { id: 'reports', label: 'INFORMES', icon: FileText },
+    { id: 'technical-review', label: 'CONCEPTOS', icon: FileCheck2 },
     { id: 'cases', label: 'EXPEDIENTES', icon: FolderKanban },
     { id: 'work-fronts', label: 'FRENTES DE OBRA', icon: Wrench },
     { id: 'materials', label: 'MATERIALES', icon: Boxes },
