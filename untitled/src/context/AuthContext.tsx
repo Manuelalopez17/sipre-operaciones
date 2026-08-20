@@ -26,6 +26,9 @@ interface AuthContextType {
     role: SupabaseUserRole,
     license?: string
   ) => Promise<{ success: boolean; error?: string }>;
+  requestPasswordReset: (email: string) => Promise<{ success: boolean; error?: string }>;
+  resendConfirmation: (email: string) => Promise<{ success: boolean; error?: string }>;
+  updatePassword: (password: string) => Promise<{ success: boolean; error?: string }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   refreshEmergency: () => Promise<void>;
@@ -223,8 +226,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       if (error) return { success: false, error: error.message };
 
-      // Do not grant operational access from the public registration form.
-      // The database trigger creates the profile as inactive and Coordinación/Gerencia activates it.
       if (data.session) await client.auth.signOut();
       setUser(null);
       setSession(null);
@@ -232,6 +233,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err?.message || 'Error al registrar usuario' };
+    }
+  };
+
+  const requestPasswordReset = async (email: string): Promise<{ success: boolean; error?: string }> => {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Cliente de Supabase no configurado' };
+    if (!email.trim()) return { success: false, error: 'Ingresa primero tu correo electrónico.' };
+    try {
+      const redirectTo = `${window.location.origin}/?reset=1`;
+      const { error } = await client.auth.resetPasswordForEmail(email.trim(), { redirectTo });
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'No se pudo enviar el correo de recuperación.' };
+    }
+  };
+
+  const resendConfirmation = async (email: string): Promise<{ success: boolean; error?: string }> => {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Cliente de Supabase no configurado' };
+    if (!email.trim()) return { success: false, error: 'Ingresa primero tu correo electrónico.' };
+    try {
+      const { error } = await client.auth.resend({
+        type: 'signup',
+        email: email.trim(),
+        options: { emailRedirectTo: window.location.origin },
+      });
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'No se pudo reenviar la confirmación.' };
+    }
+  };
+
+  const updatePassword = async (password: string): Promise<{ success: boolean; error?: string }> => {
+    const client = getSupabaseClient();
+    if (!client) return { success: false, error: 'Cliente de Supabase no configurado' };
+    if (password.length < 8) return { success: false, error: 'La contraseña debe tener al menos 8 caracteres.' };
+    try {
+      const { error } = await client.auth.updateUser({ password });
+      if (error) return { success: false, error: error.message };
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'No se pudo actualizar la contraseña.' };
     }
   };
 
@@ -267,6 +312,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       activeProfiles,
       signIn,
       signUp,
+      requestPasswordReset,
+      resendConfirmation,
+      updatePassword,
       signOut,
       refreshProfile,
       refreshEmergency,
