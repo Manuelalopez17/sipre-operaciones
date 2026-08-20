@@ -82,6 +82,22 @@ export const ReportsRemoteView: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    if (loading || selected) return;
+    const requestedVisitId = sessionStorage.getItem('sipre_open_report_visit');
+    if (!requestedVisitId) return;
+
+    const match = combined.find(row => row.inspection.visitId === requestedVisitId);
+    sessionStorage.removeItem('sipre_open_report_visit');
+
+    if (match) {
+      openReport(match.inspection);
+    } else {
+      setNotice('Esta visita todavía no tiene un informe finalizado en Supabase. Si eres el profesional asignado, vuelve a VISITAS y usa “Editar / completar informe” para diligenciarlo y finalizarlo.');
+      window.setTimeout(() => setNotice(null), 8000);
+    }
+  }, [loading, combined, selected]);
+
   if (selected) {
     return <ComprehensiveReportView inspection={{ ...selected, evidenceMedia: selectedEvidence.length ? selectedEvidence : selected.evidenceMedia }} evidence={selectedEvidence} onBack={() => setSelected(null)} />;
   }
