@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ClipboardList, MapPin, Clock, UserCheck, PlusCircle, Navigation, Play, Loader2, RefreshCw, Eye } from 'lucide-react';
+import { ClipboardList, MapPin, Clock, UserCheck, PlusCircle, Navigation, Play, Loader2, RefreshCw, Eye, FileText, Edit3 } from 'lucide-react';
 import { VisitRecord } from '../types';
 import { getVisitsFromDb, subscribeVisitsRealtime } from '../lib/remoteCore';
 import { getSupabaseClient } from '../lib/supabaseClient';
@@ -9,9 +9,13 @@ import { isCoordinator, isManagement, isProfessional } from '../lib/roles';
 interface VisitsViewProps {
   onOpenScheduleVisitModal: () => void;
   onStartFieldMode: (visit?: VisitRecord) => void;
+  onOpenReportForVisit?: (visit: VisitRecord) => void;
 }
 
-export const VisitsView: React.FC<VisitsViewProps> = ({ onOpenScheduleVisitModal, onStartFieldMode }) => {
+const statusUpper = (status?: string) => String(status || '').trim().toUpperCase();
+const isCompletedStatus = (status?: string) => ['TERMINADA', 'COMPLETED', 'COMPLETADA'].includes(statusUpper(status));
+
+export const VisitsView: React.FC<VisitsViewProps> = ({ onOpenScheduleVisitModal, onStartFieldMode, onOpenReportForVisit }) => {
   const { user, profile } = useAuth();
   const [visits, setVisits] = useState<VisitRecord[]>([]);
   const [filter, setFilter] = useState<'mine' | 'all'>('all');
@@ -54,14 +58,17 @@ export const VisitsView: React.FC<VisitsViewProps> = ({ onOpenScheduleVisitModal
     return visits;
   }, [visits, filter, professional, user?.id, profile?.full_name]);
 
-  const updateStatus = async (visit: VisitRecord, status: string) => {
+  const updateStatus = async (visit: VisitRecord, status: string): Promise<boolean> => {
     if (!professional || !isAssignedToCurrentUser(visit)) {
       setError('Solo el profesional responsable asignado puede cambiar el estado de campo de esta visita.');
-      return;
+      return false;
     }
 
     const client = getSupabaseClient();
-    if (!client) return setError('Supabase no está configurado.');
+    if (!client) {
+      setError('Supabase no está configurado.');
+      return false;
+    }
 
     setActing(visit.id);
     setError(null);
@@ -104,16 +111,25 @@ export const VisitsView: React.FC<VisitsViewProps> = ({ onOpenScheduleVisitModal
       setNotice(`Visita actualizada: ${status}`);
       setTimeout(() => setNotice(null), 3000);
       await reload();
+      return true;
     } catch (e: any) {
       setError(e?.message || 'No se pudo actualizar la visita.');
+      return false;
     } finally {
       setActing(null);
     }
   };
 
+  const reopenInspection = async (visit: VisitRecord) => {
+    const ok = window.confirm('La visita volverá a estado EN INSPECCIÓN para que puedas editar o completar el registro. Los datos remotos existentes y las fotografías no se eliminan. ¿Continuar?');
+    if (!ok) return;
+    const updated = await updateStatus(visit, 'EN INSPECCIÓN');
+    if (updated) onStartFieldMode({ ...visit, status: 'EN INSPECCIÓN' as any });
+  };
+
   const badge = (status: string) => {
-    const s = (status || '').toUpperCase();
-    const cls = s.includes('TERMINADA')
+    const s = statusUpper(status);
+    const cls = isCompletedStatus(s)
       ? 'bg-slate-800 text-slate-300'
       : s.includes('SITIO')
       ? 'bg-emerald-950 text-emerald-300'
@@ -134,7 +150,7 @@ export const VisitsView: React.FC<VisitsViewProps> = ({ onOpenScheduleVisitModal
           <div className="text-xs font-mono font-bold tracking-widest text-cyan-400 uppercase">Operaciones de Campo</div>
           <h1 className="text-2xl font-black text-white flex items-center gap-2 mt-1"><ClipboardList className="w-6 h-6 text-cyan-400" />Gestión de Visitas</h1>
           <p className="text-xs text-slate-400 mt-1">
-            {professional ? 'Aquí aparecen únicamente las visitas asignadas a tu usuario.' : 'Seguimiento de visitas sincronizado en tiempo real.'}
+            {professional ? 'Aquí aparecen únicamente las visitas asignadas a tu usuario. Puedes continuar borradores, reabrir visitas terminadas y consultar sus informes.' : 'Seguimiento de visitas sincronizado en tiempo real.'}
           </p>
         </div>
         <div className="flex gap-2">
@@ -161,6 +177,7 @@ export const VisitsView: React.FC<VisitsViewProps> = ({ onOpenScheduleVisitModal
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {visible.map(v => {
             const canOperate = professional && isAssignedToCurrentUser(v);
+            const completed = isCompletedStatus(v.status);
             return (
               <div key={v.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
                 <div className="flex justify-between gap-3">
@@ -178,19 +195,19 @@ export const VisitsView: React.FC<VisitsViewProps> = ({ onOpenScheduleVisitModal
                   <div className="text-slate-400 mt-2">{v.visitObjective || v.visitReason}</div>
                 </div>
 
-                {canOperate ? (
-                  <div className="flex flex-wrap gap-2">
-                    {(v.status === 'PROGRAMADA' || v.status === 'scheduled') && <button disabled={acting === v.id} onClick={() => updateStatus(v, 'CONFIRMADA')} className="bg-cyan-600 px-3 py-2 rounded-lg text-xs font-bold">Confirmar</button>}
-                    {v.status === 'CONFIRMADA' && <button disabled={acting === v.id} onClick={() => updateStatus(v, 'EN RUTA')} className="bg-amber-600 px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1"><Navigation className="w-3.5 h-3.5" />En ruta</button>}
-                    {v.status === 'EN RUTA' && <button disabled={acting === v.id} onClick={() => updateStatus(v, 'EN SITIO')} className="bg-emerald-600 px-3 py-2 rounded-lg text-xs font-bold">Ya estoy en sitio</button>}
-                    {v.status === 'EN SITIO' && <button disabled={acting === v.id} onClick={async () => { await updateStatus(v, 'EN INSPECCIÓN'); onStartFieldMode(v); }} className="bg-purple-600 px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1"><Play className="w-3.5 h-3.5" />Iniciar inspección</button>}
-                    {v.status === 'EN INSPECCIÓN' && <button onClick={() => onStartFieldMode(v)} className="bg-purple-700 px-3 py-2 rounded-lg text-xs font-bold">Continuar inspección</button>}
-                    {v.status === 'TERMINADA' && <span className="text-xs text-emerald-300 font-bold">Visita finalizada</span>}
-                    {acting === v.id && <span className="text-xs text-cyan-300 flex items-center gap-1"><Loader2 className="w-3.5 h-3.5 animate-spin" />Guardando...</span>}
-                  </div>
-                ) : (
-                  <div className="text-[11px] text-slate-500 border-t border-slate-800 pt-3">Modo seguimiento. Las acciones de campo pertenecen al profesional asignado.</div>
-                )}
+                <div className="flex flex-wrap gap-2">
+                  {canOperate && (v.status === 'PROGRAMADA' || v.status === 'scheduled') && <button disabled={acting === v.id} onClick={() => updateStatus(v, 'CONFIRMADA')} className="bg-cyan-600 px-3 py-2 rounded-lg text-xs font-bold">Confirmar</button>}
+                  {canOperate && v.status === 'CONFIRMADA' && <button disabled={acting === v.id} onClick={() => updateStatus(v, 'EN RUTA')} className="bg-amber-600 px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1"><Navigation className="w-3.5 h-3.5" />En ruta</button>}
+                  {canOperate && v.status === 'EN RUTA' && <button disabled={acting === v.id} onClick={() => updateStatus(v, 'EN SITIO')} className="bg-emerald-600 px-3 py-2 rounded-lg text-xs font-bold">Ya estoy en sitio</button>}
+                  {canOperate && v.status === 'EN SITIO' && <button disabled={acting === v.id} onClick={async () => { const ok = await updateStatus(v, 'EN INSPECCIÓN'); if (ok) onStartFieldMode({ ...v, status: 'EN INSPECCIÓN' as any }); }} className="bg-purple-600 px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1"><Play className="w-3.5 h-3.5" />Iniciar inspección</button>}
+                  {canOperate && v.status === 'EN INSPECCIÓN' && <button onClick={() => onStartFieldMode(v)} className="bg-purple-700 px-3 py-2 rounded-lg text-xs font-bold">Continuar inspección</button>}
+
+                  {completed && onOpenReportForVisit && <button onClick={() => onOpenReportForVisit(v)} className="bg-teal-700 hover:bg-teal-600 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1"><FileText className="w-3.5 h-3.5" />Ver informe / PDF</button>}
+                  {completed && canOperate && <button disabled={acting === v.id} onClick={() => reopenInspection(v)} className="bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1"><Edit3 className="w-3.5 h-3.5" />Editar / completar informe</button>}
+
+                  {acting === v.id && <span className="text-xs text-cyan-300 flex items-center gap-1"><Loader2 className="w-3.5 h-3.5 animate-spin" />Guardando...</span>}
+                  {!canOperate && !completed && <div className="text-[11px] text-slate-500">Modo seguimiento. Las acciones de campo pertenecen al profesional asignado.</div>}
+                </div>
               </div>
             );
           })}
