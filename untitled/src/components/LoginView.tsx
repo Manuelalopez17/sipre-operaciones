@@ -1,23 +1,6 @@
 import React, { useState } from 'react';
-import { 
-  ShieldCheck, 
-  Lock, 
-  Mail, 
-  User, 
-  Briefcase, 
-  Award, 
-  ArrowRight, 
-  AlertCircle, 
-  CheckCircle2, 
-  Loader2, 
-  Wifi, 
-  WifiOff, 
-  Sparkles,
-  Layers,
-  HardHat
-} from 'lucide-react';
+import { AlertCircle, ArrowRight, Award, CheckCircle2, Loader2, Lock, Mail, ShieldCheck, User, Wifi, WifiOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { SupabaseUserRole } from '../types';
 
 interface LoginViewProps {
   onOpenSupabaseConfig?: () => void;
@@ -25,288 +8,79 @@ interface LoginViewProps {
 
 export const LoginView: React.FC<LoginViewProps> = ({ onOpenSupabaseConfig }) => {
   const { signIn, signUp, isOnline } = useAuth();
-  const [isRegisterMode, setIsRegisterMode] = useState<boolean>(false);
-  const [email, setEmail] = useState<string>('');
-  const [password, setPassword] = useState<string>('');
-  const [fullName, setFullName] = useState<string>('');
-  const [role, setRole] = useState<SupabaseUserRole>('inspector');
-  const [license, setLicense] = useState<string>('');
-  const [loading, setLoading] = useState<boolean>(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [registerMode, setRegisterMode] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [license, setLicense] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setErrorMessage(null);
-    setSuccessMessage(null);
+    setError(null);
+    setSuccess(null);
 
-    if (!email.trim() || !password.trim()) {
-      setErrorMessage('Por favor ingresa tu correo y contraseña.');
-      return;
-    }
+    if (!email.trim() || !password) return setError('Ingresa correo y contraseña.');
+    if (password.length < 8) return setError('La contraseña debe tener al menos 8 caracteres.');
+    if (registerMode && !fullName.trim()) return setError('Ingresa tu nombre completo.');
 
     setLoading(true);
-
     try {
-      if (isRegisterMode) {
-        if (!fullName.trim()) {
-          setErrorMessage('Por favor ingresa tu nombre completo.');
-          setLoading(false);
-          return;
-        }
-
-        const res = await signUp(email, password, fullName, role, license);
-        if (!res.success) {
-          setErrorMessage(res.error || 'Error al registrar usuario.');
-        } else {
-          setSuccessMessage('¡Usuario registrado exitosamente! Puedes iniciar sesión.');
-          setIsRegisterMode(false);
-        }
+      if (registerMode) {
+        const result = await signUp(email, password, fullName, 'inspector', license);
+        if (!result.success) return setError(result.error || 'No se pudo crear la cuenta.');
+        setSuccess('Cuenta registrada. Si Supabase solicita confirmar el correo, abre el enlace recibido. Después Coordinación o Gerencia debe activar tu perfil y asignarte el rol correspondiente.');
+        setRegisterMode(false);
+        setPassword('');
       } else {
-        const res = await signIn(email, password);
-        if (!res.success) {
-          setErrorMessage(res.error || 'Credenciales inválidas o error de conexión.');
-        }
+        const result = await signIn(email, password);
+        if (!result.success) setError(result.error || 'No fue posible iniciar sesión.');
       }
-    } catch (err: any) {
-      setErrorMessage(err?.message || 'Error inesperado.');
+    } catch (e: any) {
+      setError(e?.message || 'Error inesperado.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div id="sipre-login-screen" className="min-h-screen bg-slate-950 flex flex-col justify-center items-center px-4 sm:px-6 lg:px-8 py-12 relative overflow-hidden">
-      
-      {/* Background Subtle Tech Grid */}
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b0f_1px,transparent_1px),linear-gradient(to_bottom,#1e293b0f_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] pointer-events-none" />
-
-      {/* Network Badge */}
-      <div className="absolute top-4 right-4 flex items-center space-x-2">
-        {isOnline ? (
-          <span className="flex items-center space-x-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-800">
-            <Wifi className="w-3.5 h-3.5 text-emerald-400" />
-            <span>En línea</span>
-          </span>
-        ) : (
-          <span className="flex items-center space-x-1.5 px-3 py-1 rounded-full text-[11px] font-bold bg-amber-950/80 text-amber-300 border border-amber-800 animate-pulse">
-            <WifiOff className="w-3.5 h-3.5 text-amber-400" />
-            <span>Modo Sin Conexión</span>
-          </span>
-        )}
-      </div>
-
-      <div className="w-full max-w-md space-y-6 relative z-10">
-        
-        {/* Brand Header */}
-        <div className="text-center space-y-2">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-cyan-950 border border-cyan-500/40 shadow-xl shadow-cyan-950/50 mb-2">
-            <ShieldCheck className="w-9 h-9 text-cyan-400" />
-          </div>
-          
-          <div className="flex items-center justify-center space-x-2">
-            <span className="text-2xl font-black tracking-tight text-white font-mono">SIPRE</span>
-            <span className="text-xs px-2 py-0.5 rounded font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-800">
-              OPERACIONES
-            </span>
-          </div>
-
-          <h2 className="text-sm font-semibold text-slate-300 tracking-wide uppercase">
-            Sistema de Inspección, Patología y Riesgo Estructural
-          </h2>
-          <p className="text-xs text-slate-400 max-w-xs mx-auto">
-            Plataforma colaborativa de evaluación post-sismo, gestión de expedientes y frente de obra.
-          </p>
+    <div id="sipre-login-screen" className="min-h-screen bg-slate-50 flex items-center justify-center px-4 py-10">
+      <div className="w-full max-w-md space-y-5">
+        <div className="text-center">
+          <div className="mx-auto w-16 h-16 rounded-2xl bg-teal-700 text-white flex items-center justify-center shadow-lg"><ShieldCheck className="w-9 h-9" /></div>
+          <div className="mt-3 font-mono font-black text-2xl text-slate-900">SIPRE</div>
+          <div className="text-xs font-bold text-teal-700 uppercase tracking-widest">Operaciones</div>
+          <p className="text-xs text-slate-500 mt-2">Acceso individual desde computador, tableta o celular. La información operacional se vincula al usuario autenticado.</p>
         </div>
 
-        {/* Auth Card */}
-        <div className="bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-2xl p-6 sm:p-8 shadow-2xl space-y-5">
-          
-          {/* Mode Switch Tabs */}
-          <div className="flex rounded-xl bg-slate-950 p-1 border border-slate-800">
-            <button
-              id="tab-login"
-              type="button"
-              onClick={() => {
-                setIsRegisterMode(false);
-                setErrorMessage(null);
-                setSuccessMessage(null);
-              }}
-              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
-                !isRegisterMode
-                  ? 'bg-cyan-600 text-white shadow'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Iniciar Sesión
-            </button>
-            <button
-              id="tab-register"
-              type="button"
-              onClick={() => {
-                setIsRegisterMode(true);
-                setErrorMessage(null);
-                setSuccessMessage(null);
-              }}
-              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
-                isRegisterMode
-                  ? 'bg-cyan-600 text-white shadow'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Registrar Cuenta
-            </button>
+        <div className="flex justify-end"><span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border flex items-center gap-1 ${isOnline ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>{isOnline ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}{isOnline ? 'En línea' : 'Sin conexión'}</span></div>
+
+        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm p-6 space-y-5">
+          <div className="grid grid-cols-2 bg-slate-100 rounded-xl p-1">
+            <button type="button" onClick={() => { setRegisterMode(false); setError(null); setSuccess(null); }} className={`py-2 rounded-lg text-xs font-bold ${!registerMode ? 'bg-white shadow text-teal-700' : 'text-slate-500'}`}>Iniciar sesión</button>
+            <button type="button" onClick={() => { setRegisterMode(true); setError(null); setSuccess(null); }} className={`py-2 rounded-lg text-xs font-bold ${registerMode ? 'bg-white shadow text-teal-700' : 'text-slate-500'}`}>Crear cuenta</button>
           </div>
 
-          {/* Feedback Messages */}
-          {errorMessage && (
-            <div className="p-3.5 rounded-xl bg-red-950/80 border border-red-800 text-red-200 text-xs flex items-start space-x-2">
-              <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
-              <span>{errorMessage}</span>
-            </div>
-          )}
+          {error && <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex gap-2"><AlertCircle className="w-4 h-4 shrink-0" />{error}</div>}
+          {success && <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex gap-2"><CheckCircle2 className="w-4 h-4 shrink-0" />{success}</div>}
 
-          {successMessage && (
-            <div className="p-3.5 rounded-xl bg-emerald-950/80 border border-emerald-800 text-emerald-200 text-xs flex items-start space-x-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
-              <span>{successMessage}</span>
-            </div>
-          )}
+          <form onSubmit={submit} className="space-y-4">
+            {registerMode && <>
+              <div><label className="block text-xs font-bold text-slate-700 mb-1">Nombre completo *</label><div className="relative"><User className="w-4 h-4 text-slate-400 absolute left-3 top-3" /><input value={fullName} onChange={e => setFullName(e.target.value)} className="w-full border border-slate-300 rounded-xl pl-9 pr-3 py-2.5 text-xs text-slate-900 bg-white" placeholder="Nombre y apellidos" required /></div></div>
+              <div><label className="block text-xs font-bold text-slate-700 mb-1">Matrícula profesional <span className="text-slate-400 font-normal">(si aplica)</span></label><div className="relative"><Award className="w-4 h-4 text-slate-400 absolute left-3 top-3" /><input value={license} onChange={e => setLicense(e.target.value)} className="w-full border border-slate-300 rounded-xl pl-9 pr-3 py-2.5 text-xs text-slate-900 bg-white" placeholder="COPNIA / matrícula" /></div></div>
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-800">La cuenta nueva se registra inicialmente como <strong>Profesional pendiente de activación</strong>. Coordinación o Gerencia asignará el rol definitivo: Profesional, Coordinador, Gerencia u Operativo.</div>
+            </>}
 
-          {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
-            
-            {isRegisterMode && (
-              <>
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">
-                    Nombre Completo <span className="text-red-400">*</span>
-                  </label>
-                  <div className="relative">
-                    <User className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
-                    <input
-                      id="input-full-name"
-                      type="text"
-                      required
-                      value={fullName}
-                      onChange={(e) => setFullName(e.target.value)}
-                      placeholder="Ej. Ing. Carlos Mendoza"
-                      className="w-full bg-slate-950 border border-slate-800 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 text-white text-xs rounded-xl pl-10 pr-3.5 py-2.5 outline-none"
-                    />
-                  </div>
-                </div>
+            <div><label className="block text-xs font-bold text-slate-700 mb-1">Correo electrónico *</label><div className="relative"><Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3" /><input type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full border border-slate-300 rounded-xl pl-9 pr-3 py-2.5 text-xs text-slate-900 bg-white" placeholder="usuario@correo.com" required /></div></div>
+            <div><label className="block text-xs font-bold text-slate-700 mb-1">Contraseña *</label><div className="relative"><Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3" /><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full border border-slate-300 rounded-xl pl-9 pr-3 py-2.5 text-xs text-slate-900 bg-white" placeholder="Mínimo 8 caracteres" minLength={8} required /></div></div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">
-                    Rol en SIPRE <span className="text-red-400">*</span>
-                  </label>
-                  <div className="relative">
-                    <Briefcase className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
-                    <select
-                      id="select-role"
-                      value={role}
-                      onChange={(e) => setRole(e.target.value as SupabaseUserRole)}
-                      className="w-full bg-slate-950 border border-slate-800 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 text-white text-xs rounded-xl pl-10 pr-3.5 py-2.5 outline-none appearance-none font-semibold cursor-pointer"
-                    >
-                      <option value="inspector">Profesional</option>
-                      <option value="coordinator">Coordinador</option>
-                      <option value="administrator">Gerencia</option>
-                      <option value="field_supervisor">Operativo</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-300 mb-1">
-                    Matrícula Profesional / Tarjeta CPNAA / COPNIA
-                  </label>
-                  <div className="relative">
-                    <Award className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
-                    <input
-                      id="input-license"
-                      type="text"
-                      value={license}
-                      onChange={(e) => setLicense(e.target.value)}
-                      placeholder="Ej. MP-05202-39281-ANT"
-                      className="w-full bg-slate-950 border border-slate-800 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 text-white text-xs rounded-xl pl-10 pr-3.5 py-2.5 outline-none"
-                    />
-                  </div>
-                </div>
-              </>
-            )}
-
-            <div>
-              <label className="block text-xs font-bold text-slate-300 mb-1">
-                Correo Electrónico <span className="text-red-400">*</span>
-              </label>
-              <div className="relative">
-                <Mail className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
-                <input
-                  id="input-email"
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="usuario@sipre.org"
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 text-white text-xs rounded-xl pl-10 pr-3.5 py-2.5 outline-none"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-300 mb-1">
-                Contraseña <span className="text-red-400">*</span>
-              </label>
-              <div className="relative">
-                <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
-                <input
-                  id="input-password"
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full bg-slate-950 border border-slate-800 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 text-white text-xs rounded-xl pl-10 pr-3.5 py-2.5 outline-none"
-                />
-              </div>
-            </div>
-
-            <button
-              id="btn-submit-auth"
-              type="submit"
-              disabled={loading}
-              className="w-full bg-cyan-600 hover:bg-cyan-500 disabled:bg-slate-800 text-white font-bold text-xs py-3 px-4 rounded-xl flex items-center justify-center space-x-2 shadow-lg shadow-cyan-600/25 transition-all active:scale-95 mt-2"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin text-white" />
-                  <span>Procesando...</span>
-                </>
-              ) : (
-                <>
-                  <span>{isRegisterMode ? 'REGISTRAR USUARIO' : 'INGRESAR'}</span>
-                  <ArrowRight className="w-4 h-4" />
-                </>
-              )}
-            </button>
-
+            <button disabled={loading} className="w-full bg-teal-700 hover:bg-teal-600 disabled:opacity-50 text-white rounded-xl py-3 text-xs font-black flex items-center justify-center gap-2">{loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}{registerMode ? 'REGISTRAR CUENTA' : 'INGRESAR'}</button>
           </form>
-
         </div>
 
-        {/* Database Config Trigger */}
-        {onOpenSupabaseConfig && (
-          <div className="text-center">
-            <button
-              id="btn-open-supabase-config-login"
-              onClick={onOpenSupabaseConfig}
-              className="text-xs text-slate-500 hover:text-cyan-400 underline transition-colors"
-            >
-              Configurar Credenciales de Supabase
-            </button>
-          </div>
-        )}
-
+        {onOpenSupabaseConfig && <button onClick={onOpenSupabaseConfig} className="hidden">Configurar Supabase</button>}
       </div>
     </div>
   );
