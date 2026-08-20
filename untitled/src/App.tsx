@@ -39,6 +39,7 @@ import { EmergencyConfigModal } from './components/EmergencyConfigModal';
 import { TechnicalReferencesModal } from './components/TechnicalReferencesModal';
 import { SupabaseConfigModal } from './components/SupabaseConfigModal';
 import { LoginView } from './components/LoginView';
+import { ResetPasswordView } from './components/ResetPasswordView';
 import { ShieldCheck, Loader2 } from 'lucide-react';
 
 const AppInner: React.FC = () => {
@@ -58,6 +59,7 @@ const AppInner: React.FC = () => {
   const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState(false);
 
   const planner = isCoordinator(profile?.role) || isManagement(profile?.role);
+  const resetMode = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('reset') === '1';
 
   const refreshData = () => {
     setInspections(getInspections());
@@ -249,6 +251,10 @@ const AppInner: React.FC = () => {
 
   if (authLoading) {
     return <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center space-y-4"><div className="w-16 h-16 rounded-2xl bg-cyan-950 border border-cyan-800 flex items-center justify-center text-cyan-400 animate-pulse"><ShieldCheck className="w-9 h-9" /></div><div className="flex items-center space-x-2 text-cyan-400 text-sm font-bold font-mono"><Loader2 className="w-4 h-4 animate-spin" /><span>CARGANDO SISTEMA SIPRE...</span></div></div>;
+  }
+
+  if (resetMode) {
+    return <ResetPasswordView />;
   }
 
   if (!user) {
