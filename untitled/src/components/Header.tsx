@@ -86,7 +86,7 @@ export const Header: React.FC<HeaderProps> = ({
   const navItems = [
     { id: 'dashboard', label: 'INICIO', icon: LayoutDashboard },
     { id: 'agenda', label: 'AGENDA', icon: Calendar },
-    { id: 'visits', label: 'VISITAS', icon: ClipboardList },
+    { id: "visits", label: "VISITAS", icon: ClipboardList },
     { id: 'reports', label: 'INFORMES', icon: FileText },
     { id: 'technical-review', label: 'CONCEPTOS', icon: FileCheck2 },
     { id: 'cases', label: 'EXPEDIENTES', icon: FolderKanban },
