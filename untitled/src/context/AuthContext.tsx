@@ -1,13 +1,13 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { getSupabaseClient } from '../lib/supabaseClient';
-import { UserProfile, EmergencyRecord, SupabaseUserRole } from '../types';
+import { EmergencyRecord, SupabaseUserRole, UserProfile } from '../types';
 import {
-  getUserProfile,
-  upsertUserProfile,
+  createEmergencyInDb,
   getActiveEmergency,
   getActiveProfiles,
-  createEmergencyInDb,
-  recordActivity
+  getUserProfile,
+  recordActivity,
+  upsertUserProfile,
 } from '../lib/supabaseService';
 
 interface AuthContextType {
@@ -39,43 +39,67 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<any | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [session, setSession] = useState<any | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [loading, setLoading] = useState(true);
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [currentEmergency, setCurrentEmergency] = useState<EmergencyRecord | null>(null);
   const [activeProfiles, setActiveProfiles] = useState<UserProfile[]>([]);
 
-  // Monitor network status
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-
+    const online = () => setIsOnline(true);
+    const offline = () => setIsOnline(false);
+    window.addEventListener('online', online);
+    window.addEventListener('offline', offline);
     return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', online);
+      window.removeEventListener('offline', offline);
     };
   }, []);
 
-  const loadProfile = async (userId: string, authUser?: any) => {
+  const loadProfile = async (userId: string, authUser?: any): Promise<UserProfile | null> => {
     let p = await getUserProfile(userId);
+    const client = getSupabaseClient();
+
+    if (!p && client && authUser) {
+      try {
+        const { data, error } = await client.rpc('sipre_ensure_my_profile');
+        if (!error && data) {
+          const row = Array.isArray(data) ? data[0] : data;
+          if (row) {
+            p = {
+              id: row.id,
+              full_name: row.full_name || authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'Usuario SIPRE',
+              role: row.role || 'inspector',
+              professional_license: row.professional_license || '',
+              organization: row.organization || 'SIPRE Operaciones',
+              email: row.email || authUser.email || '',
+              phone: row.phone || '',
+              active: row.active !== false,
+              created_at: row.created_at,
+              updated_at: row.updated_at,
+            };
+          }
+        }
+      } catch {
+        // Compatibility fallback for projects before migration 20260820.
+      }
+    }
+
     if (!p && authUser) {
-      // Create initial profile record if not found
-      const defaultRole: SupabaseUserRole = 'inspector';
       const initialProfile: UserProfile = {
         id: userId,
-        full_name: authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'Ingeniero Operativo',
-        role: (authUser.user_metadata?.role as SupabaseUserRole) || defaultRole,
+        full_name: authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'Usuario SIPRE',
+        role: 'inspector',
         professional_license: authUser.user_metadata?.professional_license || '',
         organization: authUser.user_metadata?.organization || 'SIPRE Operaciones',
-        email: authUser.email,
-        phone: authUser.phone || '',
+        email: authUser.email || '',
+        phone: authUser.user_metadata?.phone || authUser.phone || '',
         active: true,
       };
       p = await upsertUserProfile(initialProfile);
     }
+
     setProfile(p);
+    return p;
   };
 
   const reloadActiveProfiles = async () => {
@@ -84,17 +108,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const refreshEmergency = async () => {
-    const emg = await getActiveEmergency();
-    setCurrentEmergency(emg);
+    setCurrentEmergency(await getActiveEmergency());
   };
 
   const refreshProfile = async () => {
-    if (user?.id) {
-      await loadProfile(user.id, user);
-    }
+    if (user?.id) await loadProfile(user.id, user);
   };
 
-  // Initialize Supabase Auth session
+  const forceInactiveSignOut = async (p: UserProfile | null) => {
+    if (p?.active !== false) return false;
+    const client = getSupabaseClient();
+    if (client) await client.auth.signOut();
+    setUser(null);
+    setSession(null);
+    setProfile(null);
+    return true;
+  };
+
   useEffect(() => {
     const client = getSupabaseClient();
     if (!client) {
@@ -102,69 +132,64 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
-    let isMounted = true;
+    let mounted = true;
 
-    // Get current session
-    client.auth.getSession().then(({ data: { session: currentSession } }) => {
-      if (!isMounted) return;
+    client.auth.getSession().then(async ({ data: { session: currentSession } }) => {
+      if (!mounted) return;
       setSession(currentSession);
       setUser(currentSession?.user ?? null);
       if (currentSession?.user) {
-        loadProfile(currentSession.user.id, currentSession.user).finally(() => {
-          if (isMounted) setLoading(false);
-        });
-      } else {
-        setLoading(false);
+        const p = await loadProfile(currentSession.user.id, currentSession.user);
+        await forceInactiveSignOut(p);
       }
+      if (mounted) setLoading(false);
     });
 
-    // Listen to auth changes
     const { data: { subscription } } = client.auth.onAuthStateChange(async (_event, newSession) => {
-      if (!isMounted) return;
+      if (!mounted) return;
       setSession(newSession);
       setUser(newSession?.user ?? null);
       if (newSession?.user) {
-        await loadProfile(newSession.user.id, newSession.user);
+        const p = await loadProfile(newSession.user.id, newSession.user);
+        await forceInactiveSignOut(p);
       } else {
         setProfile(null);
       }
       setLoading(false);
     });
 
-    // Load active emergency & profiles
     refreshEmergency();
     reloadActiveProfiles();
 
     return () => {
-      isMounted = false;
+      mounted = false;
       subscription?.unsubscribe();
     };
   }, []);
 
   const signIn = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     const client = getSupabaseClient();
-    if (!client) {
-      return { success: false, error: 'Cliente de Supabase no configurado' };
-    }
+    if (!client) return { success: false, error: 'Cliente de Supabase no configurado' };
 
     try {
-      const { data, error } = await client.auth.signInWithPassword({
-        email: email.trim(),
-        password,
+      const { data, error } = await client.auth.signInWithPassword({ email: email.trim(), password });
+      if (error) return { success: false, error: error.message };
+      if (!data.user) return { success: false, error: 'No fue posible identificar el usuario.' };
+
+      const p = await loadProfile(data.user.id, data.user);
+      if (p?.active === false) {
+        await client.auth.signOut();
+        setUser(null);
+        setSession(null);
+        setProfile(null);
+        return { success: false, error: 'Tu cuenta está registrada pero aún no ha sido activada por Coordinación o Gerencia.' };
+      }
+
+      await recordActivity('Inicio de Sesión', { email: data.user.email }, {
+        userId: data.user.id,
+        userName: p?.full_name || data.user.email,
+        userRole: p?.role,
       });
-
-      if (error) {
-        return { success: false, error: error.message };
-      }
-
-      if (data.user) {
-        await loadProfile(data.user.id, data.user);
-        await recordActivity('Inicio de Sesión', { email: data.user.email }, {
-          userId: data.user.id,
-          userName: data.user.email,
-        });
-      }
-
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err?.message || 'Error al iniciar sesión' };
@@ -175,52 +200,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     email: string,
     password: string,
     fullName: string,
-    role: SupabaseUserRole,
+    _role: SupabaseUserRole,
     license?: string
   ): Promise<{ success: boolean; error?: string }> => {
     const client = getSupabaseClient();
-    if (!client) {
-      return { success: false, error: 'Cliente de Supabase no configurado' };
-    }
+    if (!client) return { success: false, error: 'Cliente de Supabase no configurado' };
 
     try {
       const { data, error } = await client.auth.signUp({
         email: email.trim(),
         password,
         options: {
+          emailRedirectTo: window.location.origin,
           data: {
             full_name: fullName.trim(),
-            role,
+            role: 'inspector',
             professional_license: license?.trim() || '',
+            organization: 'SIPRE Operaciones',
+            signup_source: 'sipre_public',
           },
         },
       });
+      if (error) return { success: false, error: error.message };
 
-      if (error) {
-        return { success: false, error: error.message };
-      }
-
-      if (data.user) {
-        const initialProfile: UserProfile = {
-          id: data.user.id,
-          full_name: fullName.trim(),
-          role,
-          professional_license: license?.trim() || '',
-          organization: 'SIPRE Operaciones',
-          email: data.user.email,
-          active: true,
-        };
-        await upsertUserProfile(initialProfile);
-        setProfile(initialProfile);
-        await reloadActiveProfiles();
-
-        await recordActivity('Usuario Registrado en el Sistema', { email, role }, {
-          userId: data.user.id,
-          userName: fullName,
-          userRole: role,
-        });
-      }
-
+      // Do not grant operational access from the public registration form.
+      // The database trigger creates the profile as inactive and Coordinación/Gerencia activates it.
+      if (data.session) await client.auth.signOut();
+      setUser(null);
+      setSession(null);
+      setProfile(null);
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err?.message || 'Error al registrar usuario' };
@@ -233,46 +241,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await recordActivity('Cierre de Sesión', {}, {
         userId: user.id,
         userName: profile?.full_name || user.email,
+        userRole: profile?.role,
       });
     }
-    if (client) {
-      await client.auth.signOut();
-    }
+    if (client) await client.auth.signOut();
     setUser(null);
     setProfile(null);
     setSession(null);
   };
 
   const createEmergency = async (data: Omit<EmergencyRecord, 'id'>): Promise<EmergencyRecord | null> => {
-    const emg = await createEmergencyInDb({
-      ...data,
-      created_by: user?.id,
-    });
-    if (emg) {
-      setCurrentEmergency(emg);
-    }
+    const emg = await createEmergencyInDb({ ...data, created_by: user?.id });
+    if (emg) setCurrentEmergency(emg);
     return emg;
   };
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        profile,
-        session,
-        loading,
-        isOnline,
-        currentEmergency,
-        activeProfiles,
-        signIn,
-        signUp,
-        signOut,
-        refreshProfile,
-        refreshEmergency,
-        createEmergency,
-        reloadActiveProfiles,
-      }}
-    >
+    <AuthContext.Provider value={{
+      user,
+      profile,
+      session,
+      loading,
+      isOnline,
+      currentEmergency,
+      activeProfiles,
+      signIn,
+      signUp,
+      signOut,
+      refreshProfile,
+      refreshEmergency,
+      createEmergency,
+      reloadActiveProfiles,
+    }}>
       {children}
     </AuthContext.Provider>
   );
@@ -280,8 +280,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
 export const useAuth = (): AuthContextType => {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
   return context;
 };
