@@ -213,6 +213,11 @@ const AppInner: React.FC = () => {
     setActiveView('field-mode');
   };
 
+  const handleOpenReportForVisit = (visit: VisitRecord) => {
+    sessionStorage.setItem('sipre_open_report_visit', visit.id);
+    setActiveView('reports');
+  };
+
   const handleFinalizeFieldInspection = async () => {
     const visit = selectedVisitForField;
     const relatedInspection = getInspections()
@@ -233,12 +238,13 @@ const AppInner: React.FC = () => {
       refreshData();
     }
 
+    if (visit?.id) {
+      sessionStorage.setItem('sipre_open_report_visit', visit.id);
+    }
     if (relatedInspection) {
       setSelectedInspection(relatedInspection);
-      setActiveView('reports');
-    } else {
-      setActiveView('reports');
     }
+    setActiveView('reports');
   };
 
   if (authLoading) {
@@ -256,7 +262,7 @@ const AppInner: React.FC = () => {
       <main className="flex-1 pb-10">
         {activeView === 'dashboard' && <Dashboard onNavigate={handleNavigate} onOpenNewCaseModal={openNewCase} onOpenScheduleVisitModal={openScheduleVisit} />}
         {activeView === 'agenda' && <AgendaView onOpenScheduleVisitModal={openScheduleVisit} />}
-        {activeView === 'visits' && <VisitsView onOpenScheduleVisitModal={openScheduleVisit} onStartFieldMode={handleStartFieldMode} />}
+        {activeView === 'visits' && <VisitsView onOpenScheduleVisitModal={openScheduleVisit} onStartFieldMode={handleStartFieldMode} onOpenReportForVisit={handleOpenReportForVisit} />}
         {activeView === 'reports' && <ReportsRemoteView />}
         {activeView === 'cases' && <CasesView onOpenNewCaseModal={openNewCase} onOpenScheduleVisitModal={openScheduleVisit} onStartFieldMode={handleStartFieldMode} onNavigateToWorkFronts={() => setActiveView('work-fronts')} />}
         {activeView === 'work-fronts' && <WorkFrontsView onNavigateToMaterials={() => setActiveView('materials')} onNavigateToDeliveries={() => setActiveView('deliveries')} />}
