@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AlertCircle, ArrowRight, Award, CheckCircle2, Loader2, Lock, Mail, ShieldCheck, User, Wifi, WifiOff } from 'lucide-react';
+import { AlertCircle, ArrowRight, Award, CheckCircle2, KeyRound, Loader2, Lock, Mail, RefreshCw, ShieldCheck, User, Wifi, WifiOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 interface LoginViewProps {
@@ -7,13 +7,14 @@ interface LoginViewProps {
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({ onOpenSupabaseConfig }) => {
-  const { signIn, signUp, isOnline } = useAuth();
+  const { signIn, signUp, requestPasswordReset, resendConfirmation, isOnline } = useAuth();
   const [registerMode, setRegisterMode] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [license, setLicense] = useState('');
   const [loading, setLoading] = useState(false);
+  const [helperLoading, setHelperLoading] = useState<'reset' | 'confirm' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -31,7 +32,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onOpenSupabaseConfig }) =>
       if (registerMode) {
         const result = await signUp(email, password, fullName, 'inspector', license);
         if (!result.success) return setError(result.error || 'No se pudo crear la cuenta.');
-        setSuccess('Cuenta registrada. Si Supabase solicita confirmar el correo, abre el enlace recibido. Después Coordinación o Gerencia debe activar tu perfil y asignarte el rol correspondiente.');
+        setSuccess('Cuenta registrada. Revisa tu correo y confirma el acceso. Después Coordinación o Gerencia debe activar tu perfil y asignarte el rol correspondiente.');
         setRegisterMode(false);
         setPassword('');
       } else {
@@ -43,6 +44,26 @@ export const LoginView: React.FC<LoginViewProps> = ({ onOpenSupabaseConfig }) =>
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleResetPassword = async () => {
+    setError(null); setSuccess(null);
+    if (!email.trim()) return setError('Escribe primero tu correo electrónico para recuperar la contraseña.');
+    setHelperLoading('reset');
+    const result = await requestPasswordReset(email);
+    setHelperLoading(null);
+    if (!result.success) return setError(result.error || 'No se pudo enviar el correo de recuperación.');
+    setSuccess('Te enviamos un enlace para crear una nueva contraseña. Abre el correo en este dispositivo y sigue el enlace de SIPRE.');
+  };
+
+  const handleResendConfirmation = async () => {
+    setError(null); setSuccess(null);
+    if (!email.trim()) return setError('Escribe primero tu correo electrónico para reenviar la confirmación.');
+    setHelperLoading('confirm');
+    const result = await resendConfirmation(email);
+    setHelperLoading(null);
+    if (!result.success) return setError(result.error || 'No se pudo reenviar la confirmación.');
+    setSuccess('Correo de confirmación reenviado. Revisa también Spam o Correo no deseado.');
   };
 
   return (
@@ -63,6 +84,10 @@ export const LoginView: React.FC<LoginViewProps> = ({ onOpenSupabaseConfig }) =>
             <button type="button" onClick={() => { setRegisterMode(true); setError(null); setSuccess(null); }} className={`py-2 rounded-lg text-xs font-bold ${registerMode ? 'bg-white shadow text-teal-700' : 'text-slate-500'}`}>Crear cuenta</button>
           </div>
 
+          {!registerMode && <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900 leading-relaxed">
+            <strong>¿Ya recibiste una invitación o tu correo ya estaba registrado?</strong> No crees otra cuenta. Ingresa con ese mismo correo. Si no recuerdas la contraseña usa <strong>Olvidé mi contraseña</strong>; si aparece “Email not confirmed”, usa <strong>Reenviar confirmación</strong>.
+          </div>}
+
           {error && <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex gap-2"><AlertCircle className="w-4 h-4 shrink-0" />{error}</div>}
           {success && <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex gap-2"><CheckCircle2 className="w-4 h-4 shrink-0" />{success}</div>}
 
@@ -70,11 +95,16 @@ export const LoginView: React.FC<LoginViewProps> = ({ onOpenSupabaseConfig }) =>
             {registerMode && <>
               <div><label className="block text-xs font-bold text-slate-700 mb-1">Nombre completo *</label><div className="relative"><User className="w-4 h-4 text-slate-400 absolute left-3 top-3" /><input value={fullName} onChange={e => setFullName(e.target.value)} className="w-full border border-slate-300 rounded-xl pl-9 pr-3 py-2.5 text-xs text-slate-900 bg-white" placeholder="Nombre y apellidos" required /></div></div>
               <div><label className="block text-xs font-bold text-slate-700 mb-1">Matrícula profesional <span className="text-slate-400 font-normal">(si aplica)</span></label><div className="relative"><Award className="w-4 h-4 text-slate-400 absolute left-3 top-3" /><input value={license} onChange={e => setLicense(e.target.value)} className="w-full border border-slate-300 rounded-xl pl-9 pr-3 py-2.5 text-xs text-slate-900 bg-white" placeholder="COPNIA / matrícula" /></div></div>
-              <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-800">La cuenta nueva se registra inicialmente como <strong>Profesional pendiente de activación</strong>. Coordinación o Gerencia asignará el rol definitivo: Profesional, Coordinador, Gerencia u Operativo.</div>
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-800">La cuenta nueva se registra inicialmente como <strong>Profesional pendiente de activación</strong>. Coordinación o Gerencia asignará el rol definitivo.</div>
             </>}
 
             <div><label className="block text-xs font-bold text-slate-700 mb-1">Correo electrónico *</label><div className="relative"><Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3" /><input type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full border border-slate-300 rounded-xl pl-9 pr-3 py-2.5 text-xs text-slate-900 bg-white" placeholder="usuario@correo.com" required /></div></div>
             <div><label className="block text-xs font-bold text-slate-700 mb-1">Contraseña *</label><div className="relative"><Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3" /><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full border border-slate-300 rounded-xl pl-9 pr-3 py-2.5 text-xs text-slate-900 bg-white" placeholder="Mínimo 8 caracteres" minLength={8} required /></div></div>
+
+            {!registerMode && <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button type="button" onClick={handleResetPassword} disabled={helperLoading !== null} className="px-3 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-[11px] font-bold flex items-center justify-center gap-1.5 disabled:opacity-50">{helperLoading === 'reset' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <KeyRound className="w-3.5 h-3.5" />}Olvidé mi contraseña</button>
+              <button type="button" onClick={handleResendConfirmation} disabled={helperLoading !== null} className="px-3 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-[11px] font-bold flex items-center justify-center gap-1.5 disabled:opacity-50">{helperLoading === 'confirm' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}Reenviar confirmación</button>
+            </div>}
 
             <button disabled={loading} className="w-full bg-teal-700 hover:bg-teal-600 disabled:opacity-50 text-white rounded-xl py-3 text-xs font-black flex items-center justify-center gap-2">{loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}{registerMode ? 'REGISTRAR CUENTA' : 'INGRESAR'}</button>
           </form>
