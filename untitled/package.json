@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build",
-    "preview": "vite preview",
+    "build": "vite build --config vite.fieldfix.config.ts",
+    "preview": "vite preview --config vite.fieldfix.config.ts",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
   },
